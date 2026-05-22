@@ -1,0 +1,16 @@
+{
+  "name": "talus-plugins",
+  "description": "Plugins for working with Talus and the Nexus SDK.",
+  "owner": {
+    "name": "The Talus Labs Team",
+    "email": "hi@taluslabs.xyz"
+  },
+  "plugins": [
+    {
+      "name": "talus",
+      "source": "./plugins/talus/",
+      "description": "Helpers for building Nexus Tools and Talus-related artifacts.",
+      "version": "0.1.0"
+    }
+  ]
+}
