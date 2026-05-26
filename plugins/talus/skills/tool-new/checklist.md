@@ -41,6 +41,14 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] Existing recipe ordering and indentation preserved
 - [ ] Workspace root `Cargo.toml` is **not** edited (the `members = ["tools/*"]` glob discovers the new member automatically)
 
+## nexus-tools CI requirements (nexus-tools mode only)
+
+- [ ] `tools.json` present at `<target-dir>/tools.json`; structure matches the reference from an existing tool
+- [ ] `build.rs` present; copied from an existing tool (e.g. `offchain/tools/math/build.rs`); not fabricated
+- [ ] `[[bin]]` section in `Cargo.toml` with `name = "<tool_name>"` (must equal `[package].name`)
+- [ ] `fqn!()` uses `concat!("<prefix>.<name>@", env!("TOOL_FQN_VERSION"))`, not a literal `@1`
+- [ ] `cargo check` runs from `offchain/` (not the repo root)
+
 ## Verification
 
 - [ ] `cargo +stable check --package <tool_name>` (workspace) or `cargo check` (standalone) passes with no errors

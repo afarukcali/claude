@@ -1,6 +1,6 @@
 ---
 name: tool-new
-description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects whether the current directory is a nexus-tools-style Cargo workspace and adds a workspace member at tools/<name>/, or otherwise scaffolds a fresh standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork of that repo) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
+description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[tool-name] [fqn-prefix]"
 arguments: tool_name fqn_prefix
 allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(ls *) Bash(find *)
@@ -32,15 +32,20 @@ Run these checks via the Bash tool (each is in the skill's allowed-tools allowli
 1. `command -v cargo` — empty stdout means `cargo` is not on PATH. Warn the user; the scaffold can still be written, but Phase 6 verification won't run.
 2. `command -v gh` — empty stdout means we'll fall back to WebFetch in Phase 3 instead of `gh api`.
 3. `command -v just` — empty stdout means `just tools::check` can't be used later (use `cargo +stable check` directly).
-4. `find . -maxdepth 1 -name Cargo.toml -type f` — non-empty stdout means a `Cargo.toml` is present in the current directory. This `find` form always exits 0 (it lists matches, not the absence as an error).
-5. If step 4 was non-empty, `head -n 25 Cargo.toml` — look at the output for `members = ["tools/*"]`.
-6. `find . -maxdepth 3 -path ./tools/math/Cargo.toml -type f` — non-empty stdout means the current tree looks like a clone or fork of `Talus-Network/nexus-tools` (canonical `tools/math/` is present).
+4. `find . -maxdepth 1 -name Cargo.toml -type f` — non-empty: a `Cargo.toml` is present at the current directory root.
+5. `find . -maxdepth 2 -path ./offchain/Cargo.toml -type f` — non-empty: a `Cargo.toml` exists one level down at `offchain/`. This is the Rust workspace root when working from the nexus-tools repo root.
+6. If step 4 was non-empty, `head -n 25 Cargo.toml` — look for `members = ["tools/*"]`.
+7. If step 5 was non-empty, `head -n 25 offchain/Cargo.toml` — look for `members = ["tools/*"]`.
+8. If step 5 was non-empty, `find . -maxdepth 2 -path ./offchain/tools -type d` — non-empty: the `offchain/tools/` directory exists. Combined with step 7 containing `members = ["tools/*"]`, this confirms a nexus-tools-style workspace at the repo root.
+9. If step 4 was non-empty and step 6 contains `members = ["tools/*"]`, `find . -maxdepth 2 -path ./tools -type d` — confirms the `tools/` directory exists (working from inside `offchain/`).
 
-Decide placement from the results:
+Decide placement and mode from the results:
 
-- **Cargo.toml present AND contains `members = ["tools/*"]`** → nexus-tools-style workspace. Add a new member at `tools/$tool_name/`. If step 6 was also non-empty, prefer reading templates locally (Phase 3.1) over fetching from upstream.
-- **Cargo.toml present but no `members = ["tools/*"]` match** → unrelated Cargo project. Ambiguous: ask the user (a) treat as standalone (new tool gets its own subdirectory inside the project), or (b) abort.
-- **No Cargo.toml** → standalone mode. Default to `$tool_name/` under the current directory.
+- **Step 7 contains `members = ["tools/*"]` AND step 8 non-empty (nexus-tools, working from repo root):** The Rust workspace is at `offchain/`; place the new tool at `offchain/tools/$tool_name/`. All `cargo` commands in later phases must be run from `offchain/`. The `tools/.just` file is at `offchain/tools/.just`. This is **nexus-tools mode** — apply the additional CI requirements in Phase 4.5. Prefer reading templates locally (Phase 3.1) over fetching from upstream.
+- **Step 6 contains `members = ["tools/*"]` AND step 9 non-empty (nexus-tools, working from inside `offchain/`):** Place the new tool at `tools/$tool_name/`. Run `cargo` commands from the current directory. The `tools/.just` file is at `tools/.just`. This is **nexus-tools mode** — apply Phase 4.5. Prefer reading templates locally.
+- **Step 4 non-empty AND step 6 contains `members = ["tools/*"]` AND steps 7–9 empty:** Generic workspace (not nexus-tools, but same layout). Place at `tools/$tool_name/`. Standard scaffold, no Phase 4.5 extras.
+- **Step 4 non-empty AND step 6 does NOT contain `members = ["tools/*"]`:** Unrelated Cargo project. Ask the user: (a) treat as standalone (tool goes in a subdirectory), or (b) abort.
+- **Steps 4, 5 both empty:** Standalone mode. Default to `$tool_name/` under the current directory.
 
 Confirm with the user before writing in any case. Never overwrite an existing target directory without explicit user confirmation.
 
@@ -49,23 +54,28 @@ Confirm with the user before writing in any case. Never overwrite an existing ta
 Gather (via AskUserQuestion if any are missing or invalid):
 
 - **`tool_name`** — used for crate name (`[package].name`), directory name, and the tail of the FQN. Validate: `^[a-z][a-z0-9-]*$`. Derive `tool_name_snake` = hyphens → underscores; `tool_name_pascal` = PascalCase of the snake form.
-- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Show the user the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`) and have them confirm before proceeding.
+- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Show the user the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`) and have them confirm before proceeding. In nexus-tools mode the version suffix is threaded from the CI build arg via `build.rs` (see Phase 4.5), so the literal `@1` is only the local-development default — confirm the prefix, not the full FQN with version.
 - **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`.
 
 ### Phase 3 — Fetch reference templates
 
+The canonical reference files live under `offchain/` in the nexus-tools repo. Adjust local read paths depending on working depth (repo root vs. inside `offchain/`).
+
 In order of preference:
 
-1. **Local read** if "Local clone of nexus-tools" was `yes`. Read these files from the local working tree:
-   - `Cargo.toml` (workspace root)
-   - `rust-toolchain.toml`
-   - `tools/.just`
-   - `tools/math/Cargo.toml`
-   - `tools/math/src/main.rs`
-   - `tools/math/src/i64/add.rs`
-   - `tools/math/README.md`
+1. **Local read** if nexus-tools mode was detected. Read these files from the local working tree (paths relative to repo root; strip `offchain/` prefix when working from inside `offchain/`):
+   - `README.md` (repo root — contains the "Adding a new tool" section; read in full)
+   - `offchain/Cargo.toml` (workspace root)
+   - `offchain/rust-toolchain.toml`
+   - `offchain/tools/.just`
+   - `offchain/tools/math/Cargo.toml`
+   - `offchain/tools/math/build.rs`
+   - `offchain/tools/math/tools.json`
+   - `offchain/tools/math/src/main.rs`
+   - `offchain/tools/math/src/i64/add.rs`
+   - `offchain/tools/math/README.md`
 
-2. **`gh` fetch** if `gh` is on PATH. For each path above, run:
+2. **`gh` fetch** if `gh` is on PATH. For each path above (using the `offchain/`-prefixed form), run:
    `gh api repos/Talus-Network/nexus-tools/contents/<path> -H "Accept: application/vnd.github.raw"`
 
 3. **WebFetch fallback** if neither: fetch `https://raw.githubusercontent.com/Talus-Network/nexus-tools/main/<path>` for each.
@@ -78,7 +88,8 @@ Use the Write tool for new files (not Edit). Mirror the structure of upstream `t
 
 #### `<target-dir>/Cargo.toml`
 
-- **Workspace member mode:** use `*.workspace = true` for every inherited field (edition, version, repository, homepage, license, readme, authors, keywords, categories) — same shape as upstream `tools/math/Cargo.toml`. Dependencies use `*.workspace = true` for `schemars`, `serde`, `tokio`, `nexus-toolkit`, `nexus-sdk`. Add additional deps the tool needs only when the user introduces them in the guide phase.
+- **Workspace member mode (nexus-tools or generic):** use `*.workspace = true` for every inherited field (edition, version, repository, homepage, license, readme, authors, keywords, categories) — same shape as upstream `tools/math/Cargo.toml`. Dependencies use `*.workspace = true` for `schemars`, `serde`, `tokio`, `nexus-toolkit`, `nexus-sdk`. Add additional deps only when the user introduces them in the guide phase.
+  - **nexus-tools mode only:** add a `[[bin]]` section with `name = "<tool_name>"` and `path = "src/main.rs"`. The binary name must equal the crate name — this is enforced at compile time by `build.rs`.
 - **Standalone mode:** use explicit values from the upstream workspace `[workspace.package]` and `[workspace.dependencies]` sections. Pin `nexus-sdk` and `nexus-toolkit` to the same `git` + `tag` upstream uses (read these from the fetched workspace `Cargo.toml`, never hardcode).
 
 #### `<target-dir>/src/main.rs`
@@ -110,7 +121,9 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
   - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
   - `Err { reason: String }`
 - Unit struct `pub(crate) struct <tool_name_pascal>;`
-- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn` via `fqn!("<computed_fqn>")`, `fn path() -> &'static str` defaulting to `/<tool_name_snake>`, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body destructures the placeholder field and uses it in the error reason so the input isn't dead code: `Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }`. The user replaces the body in the guide phase.
+- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str` defaulting to `/<tool_name_snake>`, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body destructures the placeholder field and uses it in the error reason so the input isn't dead code: `Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }`. The user replaces the body in the guide phase.
+  - **Generic workspace / standalone:** `fn fqn() -> ToolFqn { fqn!("<fqn_prefix>.<tool_name_snake>@1") }`
+  - **nexus-tools mode:** `fn fqn() -> ToolFqn { fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION"))) }` — the `env!` value is emitted by `build.rs` from the Docker build arg at CI time, and defaults to `"1"` for local builds.
 - Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` that calls `invoke` on a placeholder input and asserts the result matches `Output::Err { .. }`. The test exists to verify the skeleton compiles and runs; the user will replace it in the guide phase.
 
 #### `<target-dir>/README.md`
@@ -143,9 +156,28 @@ Returned on any failure.
 - **`err.reason`: [`String`]** — human-readable reason for the failure.
 ```
 
+### Phase 4.5 — nexus-tools additional files (nexus-tools mode only)
+
+Skip this phase entirely in generic workspace mode and standalone mode.
+
+**This phase is driven by the live README fetched in Phase 3, not by instructions baked into this skill.** The upstream repo may evolve — new files, changed structure, additional steps. The README is the authoritative source; this skill's description below is context to help interpret it, not a substitute for reading it.
+
+1. In the README fetched in Phase 3, locate the section whose heading is "Adding a new tool" (or the closest equivalent if the heading has changed).
+2. **If the section is not found:** stop and tell the user that the upstream README no longer contains an "Adding a new tool" section. Ask them to check [https://github.com/Talus-Network/nexus-tools](https://github.com/Talus-Network/nexus-tools) and confirm how to proceed before continuing.
+3. **If the section is found:** read it in full and follow every step it prescribes, using the reference tool (`offchain/tools/math/`) as the concrete implementation to copy from and adapt. Do not skip any step listed there.
+
+For context, at the time this skill was last updated the section prescribed four things — but treat this as background knowledge, not as the current source of truth:
+
+- A `tools.json` declaring the deploy shape (environment vars, resources, signed HTTP settings). If the tool needs runtime secrets (env vars read via `std::env::var`), add their keys to `"environment"` here — values are injected by the deployment pipeline, never hardcoded.
+- A `build.rs` copied from an existing tool; do not invent it. It validates the binary/crate name match at compile time and emits `TOOL_FQN_VERSION` for the `fqn!()` call.
+- A `[[bin]]` section in `Cargo.toml` with `name` equal to the crate name.
+- `fqn!()` using `concat!("...", env!("TOOL_FQN_VERSION"))` so the version flows from the CI build arg.
+
+If the live README section contains steps beyond or different from this list, follow the README — it is newer than this skill. Flag any discrepancy to the user so they are aware.
+
 ### Phase 5 — Wire into workspace `tools/.just` (workspace mode only)
 
-If the target is a workspace member, edit `tools/.just` and append the new package name to each of these recipes, preserving existing ordering and indentation:
+If the target is a workspace member, edit `tools/.just` (at `offchain/tools/.just` when working from the repo root, or `tools/.just` when working from inside `offchain/`) and append the new package name to each of these recipes, preserving existing ordering and indentation:
 
 - `build` → `cargo +stable build --package <tool_name> --release`
 - `check` → `cargo +stable check --package <tool_name>`
@@ -157,12 +189,16 @@ The workspace root `Cargo.toml` does not need editing — `members = ["tools/*"]
 
 ### Phase 6 — Verify the scaffold compiles
 
-- Workspace mode: `cargo +stable check --package <tool_name>` (or `just tools::check` if `just` is on PATH)
-- Standalone mode: `cargo check`
+- **nexus-tools mode, working from repo root:** `cd offchain && cargo +stable check --package <tool_name>` (or `just tools::check` from `offchain/` if `just` is on PATH)
+- **nexus-tools mode, working from `offchain/`:** `cargo +stable check --package <tool_name>` (or `just tools::check`)
+- **Generic workspace:** `cargo +stable check --package <tool_name>`
+- **Standalone:** `cargo check`
 
 If it fails, diagnose and fix before proceeding. Common failure modes:
 
 - `nexus-sdk` / `nexus-toolkit` versions don't match what upstream's workspace pins → re-read the workspace `Cargo.toml` and adjust.
+- `env!("TOOL_FQN_VERSION")` not found (nexus-tools mode) → `build.rs` is missing or was not copied correctly.
+- `[[bin]]` name mismatch (nexus-tools mode) → the `build.rs` assertion fires; ensure `[[bin]] name` equals `[package] name`.
 - `tool_name` contains characters Cargo rejects → re-prompt for a valid name.
 - Pre-existing directory at the target path → never overwrite without confirmation.
 
