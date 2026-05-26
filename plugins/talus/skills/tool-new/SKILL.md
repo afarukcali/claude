@@ -3,7 +3,7 @@ name: tool-new
 description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[tool-name] [fqn-prefix]"
 arguments: tool_name fqn_prefix
-allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *)
+allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *) Bash(gh api *)
 ---
 
 # `tool-new` — scaffold a new Nexus Tool in Rust
@@ -41,7 +41,7 @@ Run these checks via the Bash tool (each is in the skill's allowed-tools allowli
 
 Decide placement and mode from the results:
 
-- **Step 7 contains `members = ["tools/*"]` AND step 8 non-empty (nexus-tools, working from repo root):** The Rust workspace is at `offchain/`; place the new tool at `offchain/tools/$tool_name/`. All `cargo` commands in later phases must be run from `offchain/`. The `tools/.just` file is at `offchain/tools/.just`. This is **nexus-tools mode** — apply the additional CI requirements in Phase 4.5. Prefer reading templates locally (Phase 3.1) over fetching from upstream.
+- **Step 7 contains `members = ["tools/*"]` AND step 8 non-empty (nexus-tools, working from repo root):** The Rust workspace is at `offchain/`; place the new tool at `offchain/tools/$tool_name/`. All `cargo` commands in later phases must be run from `offchain/`. The `tools/.just` file is at `offchain/tools/.just`. This is **nexus-tools mode** — apply the additional CI requirements in Phase 4.5. Prefer reading templates locally (Phase 3, step 1 — Local read) over fetching from upstream.
 - **Step 6 contains `members = ["tools/*"]` AND step 9 non-empty (nexus-tools, working from inside `offchain/`):** Place the new tool at `tools/$tool_name/`. Run `cargo` commands from the current directory. The `tools/.just` file is at `tools/.just`. This is **nexus-tools mode** — apply Phase 4.5. Prefer reading templates locally.
 - **Step 4 non-empty AND step 6 contains `members = ["tools/*"]` AND steps 7–9 empty:** Generic workspace (not nexus-tools, but same layout). Place at `tools/$tool_name/`. Standard scaffold, no Phase 4.5 extras.
 - **Step 4 non-empty AND step 6 does NOT contain `members = ["tools/*"]`:** Unrelated Cargo project. Ask the user: (a) treat as standalone (tool goes in a subdirectory), or (b) abort.
@@ -61,8 +61,6 @@ Gather (via AskUserQuestion if any are missing or invalid):
 ### Phase 3 — Fetch reference templates
 
 The canonical reference files live under `offchain/` in the nexus-tools repo. Adjust local read paths depending on working depth (repo root vs. inside `offchain/`).
-
-In order of preference:
 
 Files to read (two groups — note the difference):
 
@@ -129,7 +127,7 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
   - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
   - `Err { reason: String }`
 - `pub(crate) struct <tool_name_pascal>;`
-- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str` defaulting to `/<tool_name_snake>`, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body destructures the placeholder field and uses it in the error reason so the input isn't dead code: `Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }`. The user replaces the body in the guide phase.
+- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str { "/<tool_name_snake>" }` — explicitly overrides the trait default (`""`) so the tool occupies its own URL namespace and multiple tools can share a binary without path conflicts, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body explicitly destructures the placeholder field and uses it in the error reason so the input isn't dead code: `let Input { placeholder } = input; Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }`. The user replaces the body in the guide phase.
   - **Generic workspace / standalone:** `fn fqn() -> ToolFqn { fqn!("<fqn_prefix>.<tool_name_snake>@1") }`
   - **nexus-tools mode:** `fn fqn() -> ToolFqn { fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION"))) }` — the `env!` value is emitted by `build.rs` from the Docker build arg at CI time, and defaults to `"1"` for local builds.
 - Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok` and `Err`), plus one health check. The scaffold variants are placeholders the user will replace, but having one test per variant from the start establishes the pattern and ensures both paths compile. Use `assert!(matches!(output, Output::Err { .. }))` style so failures localize easily.
@@ -261,7 +259,7 @@ The template contains four `__PLACEHOLDER__` markers. Substitute all four before
 | `__TOOL_NAME__` | kebab-case crate name (e.g. `weather-current`) |
 | `__TOOL_PATH__` | snake_case tool name, matching `path()` (e.g. `weather_current`) |
 | `__WORKSPACE_CARGO_DIR__` | relative path from the script to the cargo workspace root: `../..` for workspace mode (script at `…/tools/<tool_name>/test.sh`); `.` for standalone |
-| `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. For complex types (`serde_json::Value`, custom structs), ask the user for a concrete sample value. Omit any field marked `#[serde(skip)]`. If the Input struct is empty, use `{}`. The result must be valid JSON with no placeholder strings. |
+| `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. For complex types (`serde_json::Value`, custom structs), ask the user for a concrete sample value. Omit any field marked `#[serde(skip)]`. If the Input struct is empty, use `{}`. The result must be valid JSON with no placeholder strings and **no single-quote characters** — the value is embedded in a single-quoted bash string in the template; a `'` inside it would terminate the string and break the script. |
 
 Before writing, verify the substituted script has no bash syntax errors: `bash -n <path-to-substituted-content>`. If it fails, the `__SAMPLE_JSON__` substitution most likely introduced unbalanced quotes — fix the JSON before proceeding.
 

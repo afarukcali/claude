@@ -11,7 +11,7 @@ TOOL_NAME="__TOOL_NAME__"
 TOOL_PATH="__TOOL_PATH__"
 WORKSPACE_DIR="$(cd "$(dirname "$0")/__WORKSPACE_CARGO_DIR__" && pwd)"
 SAMPLE_JSON='__SAMPLE_JSON__'
-DEFAULT_PORT=3000
+DEFAULT_PORT=8080
 
 SUBCMD="${1:-}"
 shift || true
@@ -23,20 +23,35 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-PID_FILE="/tmp/${TOOL_NAME}-${PORT}.pid"
-LOG_FILE="/tmp/${TOOL_NAME}-${PORT}.log"
+RUNDIR="${TMPDIR:-/tmp}/${USER:-nobody}-${TOOL_NAME}-${PORT}"
+PID_FILE="${RUNDIR}.pid"
+LOG_FILE="${RUNDIR}.log"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+build() {
+    echo "► Building $TOOL_NAME (first run may take a few minutes)..."
+    if ! (cd "$WORKSPACE_DIR" && cargo +stable build --package "$TOOL_NAME") \
+            >"$LOG_FILE" 2>&1; then
+        echo "  Build failed. Last lines from $LOG_FILE:" >&2
+        tail -20 "$LOG_FILE" >&2
+        exit 1
+    fi
+    echo "  Build complete."
+}
 
 start_server() {
     if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
         echo "Server already running (PID $(cat "$PID_FILE"))."
         return
     fi
-    echo "► Building and starting $TOOL_NAME on port $PORT..."
-    echo "  (build + server log: $LOG_FILE)"
-    (cd "$WORKSPACE_DIR" && PORT="$PORT" cargo +stable run --package "$TOOL_NAME") \
-        >"$LOG_FILE" 2>&1 &
+    build
+    local binary="$WORKSPACE_DIR/target/debug/$TOOL_NAME"
+    if [[ ! -x "$binary" ]]; then
+        echo "  Binary not found at $binary" >&2; exit 1
+    fi
+    echo "► Starting server on port $PORT..."
+    BIND_ADDR="127.0.0.1:${PORT}" "$binary" >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
     echo "► Waiting for /health..."
     for i in $(seq 1 50); do
