@@ -25,7 +25,7 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] `Output` enum has `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`
 - [ ] `Output` has at least one success variant and at least one `err`-prefixed variant
 - [ ] `impl NexusTool` provides: `type Input`, `type Output`, `async fn new`, `fn fqn`, `fn path`, `fn description`, `async fn health`, `async fn invoke`
-- [ ] `fqn()` returns the computed FQN via `fqn!("<fqn_prefix>.<tool_name_snake>@1")`
+- [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_snake>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION")))`
 - [ ] `invoke()` does **not** return `Result` — failures are returned as `Output::Err*` variants
 - [ ] Inline `#[cfg(test)] mod tests` with at least one `#[tokio::test]`
 
@@ -37,17 +37,18 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 
 ## Workspace integration (workspace mode only)
 
-- [ ] `tools/.just` has the new package added to `build`, `check`, `test`, `fmt-check`, `clippy` recipes
+- [ ] The workspace `.just` file (`offchain/tools/.just` from repo root, or `tools/.just` from inside `offchain/`) has the new package added to `build`, `check`, `test`, `fmt-check`, `clippy` recipes
 - [ ] Existing recipe ordering and indentation preserved
 - [ ] Workspace root `Cargo.toml` is **not** edited (the `members = ["tools/*"]` glob discovers the new member automatically)
 
 ## nexus-tools CI requirements (nexus-tools mode only)
 
-- [ ] `tools.json` present at `<target-dir>/tools.json`; structure matches the reference from an existing tool
+- [ ] `tools.json` present at `<target-dir>/tools.json`; copied from a reference tool (not fabricated); contains at minimum `"tool_name"`, `"command"` (must equal the binary/crate name), and `"environment"`
 - [ ] `build.rs` present; copied from an existing tool (e.g. `offchain/tools/math/build.rs`); not fabricated
-- [ ] `[[bin]]` section in `Cargo.toml` with `name = "<tool_name>"` (must equal `[package].name`)
+- [ ] `[build-dependencies]` in `Cargo.toml` includes `serde_json.workspace = true` and `toml = "0.8"` (required by `build.rs`)
+- [ ] `[[bin]]` section in `Cargo.toml` with `name = "<tool_name>"` (must equal `[package].name` and `tools.json["command"]`)
 - [ ] `fqn!()` uses `concat!("<prefix>.<name>@", env!("TOOL_FQN_VERSION"))`, not a literal `@1`
-- [ ] `cargo check` runs from `offchain/` (not the repo root)
+- [ ] When working from the repo root: `cargo check` (and all cargo commands) run from `offchain/`, not the repo root
 
 ## Verification
 
