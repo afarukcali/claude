@@ -237,6 +237,8 @@ Walk through:
 
 3. **`invoke` body.** Implement the logic. Reminder: `invoke` returns `Self::Output` directly, not `Result` — errors are valid output variants and must be returned as `Output::Err*`.
 
+   **Logging.** `log::info!`, `log::debug!`, `log::warn!`, and `log::error!` are available via `use nexus_toolkit::*` — no extra dependency. `bootstrap!` initialises `env_logger` automatically; level is controlled by `RUST_LOG` (e.g. `RUST_LOG=debug ./test.sh start`). Prefer these over `eprintln!` — bare stderr writes bypass the log level filter and can't be silenced in production. During test script runs, all log output is captured to `${TMPDIR:-/tmp}/${USER:-nobody}-<tool_name>-<port>.log` — tail that file to follow along.
+
 4. **Tests.** At minimum: one test per output variant. Use `#[tokio::test]`. For tools that call external services, gate network-dependent tests behind `#[ignore]` or a feature flag and provide an offline test using a mock.
 
 5. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check`. Fix anything that comes up. In nexus-tools mode when working from the repo root, run these from `offchain/` (same as Phase 6).
