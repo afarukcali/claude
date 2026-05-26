@@ -51,3 +51,4 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] All output variant names are snake_case; failure variants are prefixed `err`
 - [ ] Output ports have no nested objects — flat structure
 - [ ] Crucial output ports are not `Option<...>` — return an `err` variant instead
+- [ ] Read every field name in the `Input` struct. Any name containing `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar is a violation — remove the field and read the value via `std::env::var(...)` in `invoke` (or `new`) instead. Input ports go on-chain and are permanently visible.

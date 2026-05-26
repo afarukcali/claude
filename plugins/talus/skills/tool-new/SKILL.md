@@ -104,7 +104,8 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
 
 - Module doc comment starting with the FQN
 - `use` block (`nexus_sdk::{fqn, ToolFqn}`, `nexus_toolkit::*`, `schemars::JsonSchema`, `serde::{Deserialize, Serialize}`)
-- `Input` struct with `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`. Put one placeholder field — e.g., `placeholder: String` — that the user will replace in the guide phase. Mark with a `// TODO:` so it's easy to find.
+- `Input` struct with `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`. Put one placeholder field — e.g., `placeholder: String` — that the user will replace in the guide phase. Mark with a `// TODO:` so it's easy to find. **Never add a secret (API key, private key, OAuth token, signing material) as an Input field** — Input ports are propagated on-chain by the Nexus runtime and are permanently visible.
+- Whenever it is apparent that the tool will need a secret — whether stated in the user's description or inferred by the agent during analysis (e.g., the tool calls an external API that requires authentication) — add a `// SECURITY: read secret from env var, never from Input` comment at the top of `async fn invoke`, followed by a commented-out example: `// let api_key = std::env::var("API_KEY").map_err(|_| ...)?;`. Do not add the secret as an Input field.
 - `Output` enum with `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`. Two variants:
   - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
   - `Err { reason: String }`
@@ -165,6 +166,8 @@ If it fails, diagnose and fix before proceeding. Common failure modes:
 - `tool_name` contains characters Cargo rejects → re-prompt for a valid name.
 - Pre-existing directory at the target path → never overwrite without confirmation.
 
+Before cross-referencing the checklist, read the generated `src/<tool_name_snake>.rs` and inspect the `Input` struct field names. If any field name suggests it carries a secret value — e.g. contains `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar — that is a violation of the secrets-via-env rule regardless of how the scaffold got there. Remove the field, add a `std::env::var("VAR_NAME")` call in `invoke` (and in `new` if the value is needed at construction time), and rerun `cargo check`.
+
 Cross-reference the generated files against [checklist.md](checklist.md) before declaring the scaffold done.
 
 ### Phase 7 — Guide phase
@@ -174,9 +177,10 @@ Ask the user whether to continue with the guide phase (filling in real `Input` /
 If continuing, walk through:
 
 1. **Input schema.** What does the tool need? Apply [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md) conventions:
-   - snake_case names; descriptive (e.g., `api_key`, not `k`)
+   - snake_case names; descriptive (e.g., `model`, not `m`)
    - Separate ports for things the DAG should be able to default independently (e.g., `prompt` and `context` as two ports, not one merged)
    - Generic over inputs where the API allows (e.g., accept a `json_schema` input rather than hardcoding a response shape)
+   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak.
 
 2. **Output variants.** Design the success / failure split:
    - One or more success variants (`Ok`, or domain-specific like `Created` / `Found`)
