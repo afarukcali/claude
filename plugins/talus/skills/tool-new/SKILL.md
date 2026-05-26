@@ -239,8 +239,6 @@ Walk through:
 
 6. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real ones; preserve the FQN-titled heading.
 
-7. **Optional: deployment notes.** Remind the user that Nexus Tools must be deployed behind HTTPS, and that `POST /invoke` requires Ed25519-signed HTTP via `X-Nexus-Sig-*` headers when enabled. Point to [the SDK's tool-communication guide](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/guides/tool-communication.md).
-
 ### Phase 8 — Generate test script
 
 Fetch the template from the `Talus-Network/claude` repository (the plugin's own repo, not nexus-tools). Use the same preference order as Phase 3:
@@ -277,6 +275,20 @@ test-run tool:
 ```
 
 Where `<path-to-tools-dir>` matches the existing recipes' path convention (`tools/` when running from `offchain/`, `offchain/tools/` when running from the repo root).
+
+**Deployment reminders**
+
+After printing the curl examples, surface these to the user. They are protocol invariants — verified against the upstream SDK docs — that apply to every Nexus Tool.
+
+1. **HTTPS with a publicly trusted TLS certificate.** Leader nodes validate certificates against the system root trust store (same as `curl`). A self-signed certificate will be rejected. Use Let's Encrypt or a cloud-managed certificate. Source: [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md), [tool-communication.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/guides/tool-communication.md).
+
+2. **Reverse proxy must forward `X-Nexus-Sig-*` headers.** Some API gateways strip unknown headers by default — verify yours passes them through. Do not use middleware that rewrites request or response bodies; the Ed25519 signature binds the raw bytes. Source: tool-communication.md.
+
+3. **Keep the server clock NTP-synced.** Signed requests carry validity windows; clock skew between your host and Leader nodes causes authentication failures. Source: tool-development.md.
+
+4. **`health()` should verify dependent services.** The scaffold returns `Ok(StatusCode::OK)` unconditionally. Replace this with real checks (database reachable, upstream API responsive, etc.) before deploying — Leader nodes use the health endpoint to decide whether to route invocations. Source: [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md).
+
+5. **Nonce deduplication is in-memory by default.** The toolkit automatically deduplicates nonces (preventing replay attacks) using an in-memory store. For a single-process deployment this is sufficient. For multi-instance deployments behind a load balancer, in-memory state is not shared across processes — use sticky sessions or a shared store (e.g. Redis) to ensure replays routed to a different instance are still rejected. Source: tool-communication.md.
 
 ## Conventions (cited from upstream, summary)
 
