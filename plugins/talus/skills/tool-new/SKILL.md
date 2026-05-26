@@ -216,9 +216,7 @@ Cross-reference the generated files against [checklist.md](checklist.md) before 
 
 ### Phase 7 — Guide phase
 
-Ask the user whether to continue with the guide phase (filling in real `Input` / `Output` / `invoke` logic) or stop here.
-
-If continuing, walk through:
+Walk through:
 
 1. **Input schema.** What does the tool need? Apply [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md) conventions:
    - snake_case names; descriptive (e.g., `model`, not `m`)
