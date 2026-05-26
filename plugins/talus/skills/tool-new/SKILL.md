@@ -3,7 +3,7 @@ name: tool-new
 description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[tool-name] [fqn-prefix]"
 arguments: tool_name fqn_prefix
-allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *)
+allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *)
 ---
 
 # `tool-new` — scaffold a new Nexus Tool in Rust
@@ -240,6 +240,43 @@ Walk through:
 6. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real ones; preserve the FQN-titled heading.
 
 7. **Optional: deployment notes.** Remind the user that Nexus Tools must be deployed behind HTTPS, and that `POST /invoke` requires Ed25519-signed HTTP via `X-Nexus-Sig-*` headers when enabled. Point to [the SDK's tool-communication guide](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/guides/tool-communication.md).
+
+### Phase 8 — Generate test script
+
+Fetch the template from the `Talus-Network/claude` repository (the plugin's own repo, not nexus-tools). Use the same preference order as Phase 3:
+
+- `gh api repos/Talus-Network/claude/contents/plugins/talus/skills/tool-new/templates/test.sh -H "Accept: application/vnd.github.raw"`
+- WebFetch fallback: `https://raw.githubusercontent.com/Talus-Network/claude/main/plugins/talus/skills/tool-new/templates/test.sh`
+
+The template contains four `__PLACEHOLDER__` markers. Substitute all four before writing:
+
+| Placeholder | Value |
+|---|---|
+| `__TOOL_NAME__` | kebab-case crate name (e.g. `weather-current`) |
+| `__TOOL_PATH__` | snake_case tool name, matching `path()` (e.g. `weather_current`) |
+| `__WORKSPACE_CARGO_DIR__` | relative path from the script to the cargo workspace root: `../..` for workspace mode (script at `…/tools/<tool_name>/test.sh`); `.` for standalone |
+| `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. Use `"TODO"` for unmapped types. Must be valid JSON. |
+
+Write the substituted content to `<target-dir>/test.sh`, then `chmod +x <target-dir>/test.sh`.
+
+After writing, print the curl examples to the user immediately — same output as `./test.sh start` would show — so they have the invocations at hand without running the script first.
+
+**`just` integration (workspace mode + `just` on PATH from Phase 1)**
+
+Read the existing `tools/.just` to understand the exact recipe format and parameter convention, then append three recipes following the same style. The recipe bodies `cd` into the tool directory (path relative to the `just` invocation root) and call the corresponding `test.sh` subcommand:
+
+```
+test-start tool:
+    cd <path-to-tools-dir>/{{tool}} && ./test.sh start
+
+test-stop tool:
+    cd <path-to-tools-dir>/{{tool}} && ./test.sh stop
+
+test-run tool:
+    cd <path-to-tools-dir>/{{tool}} && ./test.sh run
+```
+
+Where `<path-to-tools-dir>` matches the existing recipes' path convention (`tools/` when running from `offchain/`, `offchain/tools/` when running from the repo root).
 
 ## Conventions (cited from upstream, summary)
 

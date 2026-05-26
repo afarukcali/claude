@@ -50,6 +50,14 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] `fqn!()` uses `concat!("<prefix>.<name>@", env!("TOOL_FQN_VERSION"))`, not a literal `@1`
 - [ ] When working from the repo root: `cargo check` (and all cargo commands) run from `offchain/`, not the repo root
 
+## Test script
+
+- [ ] `<target-dir>/test.sh` exists and is executable (`chmod +x`)
+- [ ] `TOOL_NAME`, `TOOL_PATH`, `WORKSPACE_CARGO_DIR`, and `SAMPLE_JSON` are all substituted — no placeholder strings remain
+- [ ] `SAMPLE_JSON` is valid JSON and reflects the actual Input fields (not placeholder types)
+- [ ] `./test.sh run` starts the server, gets a response, and stops cleanly
+- [ ] **Workspace mode with `just`:** `test-start`, `test-stop`, `test-run` recipes present in `tools/.just`
+
 ## Verification
 
 - [ ] `cargo +stable check --package <tool_name>` (workspace) or `cargo check` (standalone) passes with no errors
