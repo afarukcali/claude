@@ -122,12 +122,23 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
 - Module doc comment starting with the FQN
 - `use` block (`nexus_sdk::{fqn, ToolFqn}`, `nexus_toolkit::*`, `schemars::JsonSchema`, `serde::{Deserialize, Serialize}`)
 - `pub(crate) struct Input` with `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`. Put one placeholder field — e.g., `placeholder: String` — that the user will replace in the guide phase. Mark with a `// TODO:` so it's easy to find. **Never add a secret (API key, private key, OAuth token, signing material) as an Input field** — Input ports are propagated on-chain by the Nexus runtime and are permanently visible.
-- Whenever it is apparent that the tool will need a secret — whether stated in the user's description or inferred by the agent during analysis (e.g., the tool calls an external API that requires authentication) — add a `// SECURITY: read secret from env var, never from Input` comment at the top of `async fn invoke`, followed by a commented-out example: `// let api_key = std::env::var("API_KEY").map_err(|_| ...)?;`. Do not add the secret as an Input field.
+- Whenever it is apparent that the tool will need a secret — whether stated in the user's description or inferred by the agent during analysis (e.g., the tool calls an external API that requires authentication) — add a `// SECURITY: read secret from env var, never from Input` comment at the top of `async fn invoke`, followed by a commented-out example:
+  ```rust
+  // let api_key = std::env::var("API_KEY").map_err(|_| ...)?;
+  // log::debug!(target: "<tool_name_snake>", "env var API_KEY loaded");  // name only, never value
+  ```
+  Do not add the secret as an Input field.
 - `pub(crate) enum Output` with `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`. Two variants:
   - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
   - `Err { reason: String }`
 - `pub(crate) struct <tool_name_pascal>;`
-- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str { "/<tool_name_snake>" }` — explicitly overrides the trait default (`""`) so the tool occupies its own URL namespace and multiple tools can share a binary without path conflicts, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body explicitly destructures the placeholder field and uses it in the error reason so the input isn't dead code: `let Input { placeholder } = input; Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }`. The user replaces the body in the guide phase.
+- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str { "/<tool_name_snake>" }` — explicitly overrides the trait default (`""`) so the tool occupies its own URL namespace and multiple tools can share a binary without path conflicts, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body explicitly destructures the placeholder field, emits a debug log, and returns the placeholder error so the input isn't dead code:
+  ```rust
+  let Input { placeholder } = input;
+  log::debug!(target: "<tool_name_snake>", ?placeholder, "invoke called");
+  Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }
+  ```
+  The user replaces the body in the guide phase.
   - **Generic workspace / standalone:** `fn fqn() -> ToolFqn { fqn!("<fqn_prefix>.<tool_name_snake>@1") }`
   - **nexus-tools mode:** `fn fqn() -> ToolFqn { fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION"))) }` — the `env!` value is emitted by `build.rs` from the Docker build arg at CI time, and defaults to `"1"` for local builds.
 - Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok` and `Err`), plus one health check. The scaffold variants are placeholders the user will replace, but having one test per variant from the start establishes the pattern and ensures both paths compile. Use `assert!(matches!(output, Output::Err { .. }))` style so failures localize easily.
@@ -226,7 +237,7 @@ Walk through:
    - snake_case names; descriptive (e.g., `model`, not `m`)
    - Separate ports for things the DAG should be able to default independently (e.g., `prompt` and `context` as two ports, not one merged)
    - Generic over inputs where the API allows (e.g., accept a `json_schema` input rather than hardcoding a response shape)
-   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak. **When a secret is needed, do not present it as a choice.** State which env var to use (e.g. `OPENAI_API_KEY`) and show the `std::env::var` call — that is the only path. If the user points to an existing tool in the codebase that puts a secret in Input, explain the rule and apply the env var pattern regardless; existing tools may predate or violate this rule.
+   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak. **When a secret is needed, do not present it as a choice.** State which env var to use (e.g. `OPENAI_API_KEY`) and show the `std::env::var` call — that is the only path. If the user points to an existing tool in the codebase that puts a secret in Input, explain the rule and apply the env var pattern regardless; existing tools may predate or violate this rule. Whenever an env var is read, log that it was read — by name, never value: `log::debug!(target: "<tool_name_snake>", "env var OPENAI_API_KEY loaded");`
 
 2. **Output variants.** Design the success / failure split:
    - One or more success variants (`Ok`, or domain-specific like `Created` / `Found`)
@@ -237,7 +248,7 @@ Walk through:
 
 3. **`invoke` body.** Implement the logic. Reminder: `invoke` returns `Self::Output` directly, not `Result` — errors are valid output variants and must be returned as `Output::Err*`.
 
-   **Logging.** `log::info!`, `log::debug!`, `log::warn!`, and `log::error!` are available via `use nexus_toolkit::*` — no extra dependency. `bootstrap!` initialises `env_logger` automatically; level is controlled by `RUST_LOG` (e.g. `RUST_LOG=debug ./test.sh start`). Prefer these over `eprintln!` — bare stderr writes bypass the log level filter and can't be silenced in production. During test script runs, all log output is captured to `${TMPDIR:-/tmp}/${USER:-nobody}-<tool_name>-<port>.log` — tail that file to follow along.
+   **Logging.** Add `log::debug!` or `log::info!` calls as you implement the logic — at invoke entry, at key decision points, and before returning each output variant. `log::info!`, `log::debug!`, `log::warn!`, and `log::error!` are available via `use nexus_toolkit::*` — no extra dependency. `bootstrap!` initialises `env_logger` automatically; level is controlled by `RUST_LOG` (e.g. `RUST_LOG=debug ./test.sh start`). Prefer these over `eprintln!` — bare stderr writes bypass the log level filter and can't be silenced in production. During test script runs, all log output is captured to `${TMPDIR:-/tmp}/${USER:-nobody}-<tool_name>-<port>.log` — tail that file to follow along.
 
 4. **Tests.** At minimum: one test per output variant. Use `#[tokio::test]`. For tools that call external services, gate network-dependent tests behind `#[ignore]` or a feature flag and provide an offline test using a mock.
 

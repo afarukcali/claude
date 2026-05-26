@@ -56,7 +56,7 @@ start_server() {
     echo "► Waiting for /health..."
     for i in $(seq 1 50); do
         if curl -sf "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-            echo "  Ready."; return
+            echo "  Ready. PID: $(cat "$PID_FILE")  Logs: $LOG_FILE"; return
         fi
         if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             echo "  Server exited prematurely. Last lines from $LOG_FILE:" >&2
