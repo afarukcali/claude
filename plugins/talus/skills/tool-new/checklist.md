@@ -27,13 +27,13 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] `impl NexusTool` provides: `type Input`, `type Output`, `async fn new`, `fn fqn`, `fn path`, `fn description`, `async fn health`, `async fn invoke`
 - [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_snake>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION")))`
 - [ ] `invoke()` does **not** return `Result` — failures are returned as `Output::Err*` variants
-- [ ] Inline `#[cfg(test)] mod tests` with at least one `#[tokio::test]`
+- [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok` and `Err`) plus one health check
 
 ## `<target-dir>/README.md`
 
 - [ ] Top-level heading is the FQN in backticks (e.g. `` # `xyz.taluslabs.weather.current@1` ``)
-- [ ] `## Input` section lists every input port with type and description
-- [ ] `## Output Variants & Ports` section lists every variant; for each variant, lists every output port with type and description
+- [ ] `## Input` section lists every input port with type and description — no TODO or placeholder text
+- [ ] `## Output Variants & Ports` section lists every variant; for each variant, lists every output port with type and description — no TODO or placeholder text
 
 ## Workspace integration (workspace mode only)
 
@@ -52,11 +52,11 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 
 ## Test script
 
-- [ ] `<target-dir>/test.sh` exists and is executable (`chmod +x`)
-- [ ] `TOOL_NAME`, `TOOL_PATH`, `WORKSPACE_CARGO_DIR`, and `SAMPLE_JSON` are all substituted — no placeholder strings remain
-- [ ] `SAMPLE_JSON` is valid JSON and reflects the actual Input fields (not placeholder types)
+- [ ] `<target-dir>/test.sh` exists, is executable (`chmod +x`), and passes `bash -n test.sh`
+- [ ] All four `__PLACEHOLDER__` markers are substituted — no `__` strings remain in the file
+- [ ] `SAMPLE_JSON` is valid JSON, reflects the actual Input fields, and contains no placeholder strings
 - [ ] `./test.sh run` starts the server, gets a response, and stops cleanly
-- [ ] **Workspace mode with `just`:** `test-start`, `test-stop`, `test-run` recipes present in `tools/.just`
+- [ ] **Workspace mode with `just`:** `test-start`, `test-stop`, `test-run` recipes present in `tools/.just` and `just --list` produces no errors
 
 ## Verification
 

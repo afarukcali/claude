@@ -3,7 +3,7 @@ name: tool-new
 description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[tool-name] [fqn-prefix]"
 arguments: tool_name fqn_prefix
-allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *)
+allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *)
 ---
 
 # `tool-new` — scaffold a new Nexus Tool in Rust
@@ -210,7 +210,13 @@ If it fails, diagnose and fix before proceeding. Common failure modes:
 - `tool_name` contains characters Cargo rejects → re-prompt for a valid name.
 - Pre-existing directory at the target path → never overwrite without confirmation.
 
-Before cross-referencing the checklist, read the generated `src/<tool_name_snake>.rs` and inspect the `Input` struct field names. If any field name suggests it carries a secret value — e.g. contains `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar — that is a violation of the secrets-via-env rule regardless of how the scaffold got there. Remove the field, add a `std::env::var("VAR_NAME")` call in `invoke` (and in `new` if the value is needed at construction time), and rerun `cargo check`.
+Before cross-referencing the checklist, scan the generated `src/<tool_name_snake>.rs` for secret-sounding field names:
+
+```
+grep -i 'key\|token\|secret\|password\|credential\|private\|auth' src/<tool_name_snake>.rs
+```
+
+If any match falls inside the `Input` struct, that field violates the secrets-via-env rule. Remove it from `Input`, add a `std::env::var("VAR_NAME")` call in `invoke` (and in `new` if the value is needed at construction time), and rerun `cargo check`. Matches inside `Output`, `impl NexusTool`, or `tests` are not violations.
 
 Cross-reference the generated files against [checklist.md](checklist.md) before declaring the scaffold done.
 
@@ -237,7 +243,9 @@ Walk through:
 
 5. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check`. Fix anything that comes up. In nexus-tools mode when working from the repo root, run these from `offchain/` (same as Phase 6).
 
-6. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real ones; preserve the FQN-titled heading.
+6. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real ones; preserve the FQN-titled heading. Verify no TODO text remains.
+
+7. **Implement `health()`.** The scaffold returns `Ok(StatusCode::OK)` unconditionally. Replace it with real checks for every service the tool depends on (database, upstream API, cache, etc.) — Leader nodes use the health endpoint to decide whether to route invocations. A trivially passing health check hides outages.
 
 ### Phase 8 — Generate test script
 
@@ -253,7 +261,9 @@ The template contains four `__PLACEHOLDER__` markers. Substitute all four before
 | `__TOOL_NAME__` | kebab-case crate name (e.g. `weather-current`) |
 | `__TOOL_PATH__` | snake_case tool name, matching `path()` (e.g. `weather_current`) |
 | `__WORKSPACE_CARGO_DIR__` | relative path from the script to the cargo workspace root: `../..` for workspace mode (script at `…/tools/<tool_name>/test.sh`); `.` for standalone |
-| `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. Use `"TODO"` for unmapped types. Must be valid JSON. |
+| `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. For complex types (`serde_json::Value`, custom structs), ask the user for a concrete sample value. Omit any field marked `#[serde(skip)]`. If the Input struct is empty, use `{}`. The result must be valid JSON with no placeholder strings. |
+
+Before writing, verify the substituted script has no bash syntax errors: `bash -n <path-to-substituted-content>`. If it fails, the `__SAMPLE_JSON__` substitution most likely introduced unbalanced quotes — fix the JSON before proceeding.
 
 Write the substituted content to `<target-dir>/test.sh`, then `chmod +x <target-dir>/test.sh`.
 
@@ -286,7 +296,7 @@ After printing the curl examples, surface these to the user. They are protocol i
 
 3. **Keep the server clock NTP-synced.** Signed requests carry validity windows; clock skew between your host and Leader nodes causes authentication failures. Source: tool-development.md.
 
-4. **`health()` should verify dependent services.** The scaffold returns `Ok(StatusCode::OK)` unconditionally. Replace this with real checks (database reachable, upstream API responsive, etc.) before deploying — Leader nodes use the health endpoint to decide whether to route invocations. Source: [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md).
+4. **`health()` must check dependent services before deploying** — see Phase 7 step 7. Source: [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md).
 
 5. **Nonce deduplication is in-memory by default.** The toolkit automatically deduplicates nonces (preventing replay attacks) using an in-memory store. For a single-process deployment this is sufficient. For multi-instance deployments behind a load balancer, in-memory state is not shared across processes — use sticky sessions or a shared store (e.g. Redis) to ensure replays routed to a different instance are still rejected. Source: tool-communication.md.
 
