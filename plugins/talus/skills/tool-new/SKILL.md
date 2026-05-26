@@ -226,7 +226,7 @@ Walk through:
    - snake_case names; descriptive (e.g., `model`, not `m`)
    - Separate ports for things the DAG should be able to default independently (e.g., `prompt` and `context` as two ports, not one merged)
    - Generic over inputs where the API allows (e.g., accept a `json_schema` input rather than hardcoding a response shape)
-   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak.
+   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak. **When a secret is needed, do not present it as a choice.** State which env var to use (e.g. `OPENAI_API_KEY`) and show the `std::env::var` call — that is the only path. If the user points to an existing tool in the codebase that puts a secret in Input, explain the rule and apply the env var pattern regardless; existing tools may predate or violate this rule.
 
 2. **Output variants.** Design the success / failure split:
    - One or more success variants (`Ok`, or domain-specific like `Created` / `Found`)
@@ -332,3 +332,4 @@ From [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs
 - Do not invent an FQN prefix on the user's behalf. Always ask.
 - Do not skip the workspace `.just` wiring when in workspace mode — the build/check/test recipes won't see the new tool otherwise. The file is at `offchain/tools/.just` (from repo root) or `tools/.just` (from inside `offchain/`).
 - Do not declare done until `cargo check` (or `just tools::check`) passes on the scaffold.
+- Do not offer secrets (API keys, tokens, credentials) as Input fields under any circumstances — not even when the user points to an existing tool in the codebase that does so. Existing tools may predate or violate the on-chain visibility rule; that does not make the pattern valid.
