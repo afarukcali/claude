@@ -1,8 +1,7 @@
 ---
 name: tool-new
 description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
-argument-hint: "[tool-name] [fqn-prefix]"
-arguments: tool_name fqn_prefix
+argument-hint: "[--auto] [tool-name] [fqn-prefix] [description]"
 allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *) Bash(gh api *)
 ---
 
@@ -14,8 +13,29 @@ This skill scaffolds a working skeleton, then guides the user through writing re
 
 ## Arguments
 
-- `$tool_name` — kebab-case crate/dir name for the tool (e.g. `weather-current`). If empty, ask the user.
-- `$fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). If empty, ask the user. **Never invent or default this.** The final FQN is `<fqn_prefix>.<tool_name_snake>@1`, where `<tool_name_snake>` is `$tool_name` with hyphens converted to underscores.
+Supported invocation forms:
+
+```
+/talus:tool-new my-tool xyz.acme.weather "Fetches current weather"
+/talus:tool-new --auto "Fetches current weather"
+/talus:tool-new --auto Fetches current weather
+/talus:tool-new "Fetches current weather" --auto
+/talus:tool-new Fetches current weather --auto
+```
+
+**Parsing rules.** Strip `--auto` or `--yes` wherever it appears — its presence sets auto mode (see below). From the remaining tokens:
+
+- A token matching `^[a-z][a-z0-9-]*$` (no dots, kebab-case) → `tool_name`
+- A token matching the reverse-domain pattern (contains dots, e.g. `xyz.acme.weather`) → `fqn_prefix`
+- Everything else, joined → `description`
+
+**Named arguments:**
+
+- `tool_name` — kebab-case crate/dir name (e.g. `weather-current`). In auto mode, if absent: derive from the significant words of the description (drop leading verbs like "fetches"/"gets", convert nouns to kebab-case — e.g. "Fetches current weather" → `current-weather`). Print the derived name; do not wait for confirmation. Without auto mode, ask.
+- `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). In auto mode, if absent: scan existing tools in the workspace for `fqn!(...)` calls and extract the common prefix; if found, use it; if ambiguous or not found, use `com.example` and warn the user to update it before publishing. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<tool_name_snake>@1`.
+- `description` — one-line description of what the tool does. Required in all modes; ask if missing even in auto mode.
+
+**Auto mode** (`--auto` / `--yes`): skip every confirmation gate throughout all phases — placement, FQN preview, overwrite check. Infer anything not explicitly provided using the rules above.
 
 ## Context (computed at invocation)
 
@@ -48,14 +68,14 @@ Decide placement and mode from the results:
 - **Step 5 non-empty AND step 7 does NOT contain `members = ["tools/*"]`:** `offchain/Cargo.toml` exists but is not a tools workspace. Fall through: check step 4; if that also fails, use standalone mode. Ask the user to confirm before proceeding.
 - **Steps 4, 5 both empty:** Standalone mode. Default to `$tool_name/` under the current directory.
 
-Confirm with the user before writing in any case. Never overwrite an existing target directory without explicit user confirmation.
+In auto mode, skip the placement confirmation — proceed with the detected mode without asking. Never overwrite an existing target directory without explicit user confirmation (this check is not bypassed by auto mode).
 
 ### Phase 2 — Collect inputs
 
 Gather (via AskUserQuestion if any are missing or invalid):
 
 - **`tool_name`** — used for crate name (`[package].name`), directory name, and the tail of the FQN. Validate: `^[a-z][a-z0-9-]*$`. Derive `tool_name_snake` = hyphens → underscores; `tool_name_pascal` = PascalCase of the snake form.
-- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Show the user the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`) and have them confirm before proceeding. In nexus-tools mode the version suffix is threaded from the CI build arg via `build.rs` (see Phase 4.5), so the literal `@1` is only the local-development default — confirm the prefix, not the full FQN with version.
+- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Show the user the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`) and have them confirm before proceeding — unless in auto mode, in which case print the FQN and continue without waiting. In nexus-tools mode the version suffix is threaded from the CI build arg via `build.rs` (see Phase 4.5), so the literal `@1` is only the local-development default — confirm the prefix, not the full FQN with version.
 - **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`.
 
 ### Phase 3 — Fetch reference templates
