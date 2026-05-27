@@ -12,19 +12,20 @@ Helpers for building Nexus Tools and Talus-related artifacts.
 
 - **`/talus:tool-new [--auto] [tool-name] [fqn-prefix] [description]`** — Scaffold a new [Nexus Tool](https://github.com/Talus-Network/nexus-tools) in Rust and walk the user through implementing it. Detects whether the current directory is a nexus-tools-style workspace (root `Cargo.toml` with `members = ["tools/*"]`) and adds a workspace member at `tools/<tool-name>/`, or otherwise scaffolds a fresh standalone crate. Reference templates are read from the latest upstream `Talus-Network/nexus-tools` at invocation time, or from the local clone if you are inside one — no frozen baked-in templates. Pass `--auto` to skip all confirmation gates and infer missing arguments.
 
-## Install via `/plugin`
+## Install
 
 In any Claude Code session (CLI or VS Code extension):
 
 ```text
-/plugin marketplace add /path/to/this/repo
+/plugin marketplace add Talus-Network/claude
 /plugin install talus@talus-plugins
 ```
 
-Once published to a remote, the marketplace argument becomes a git URL or `owner/repo` shorthand:
+To use a local checkout instead:
 
 ```text
-/plugin marketplace add <owner>/<repo>
+/plugin marketplace add /path/to/this/repo
+/plugin install talus@talus-plugins
 ```
 
 ## Try a single plugin without installing (CLI only)
