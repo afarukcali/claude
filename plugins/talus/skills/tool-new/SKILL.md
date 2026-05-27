@@ -293,6 +293,9 @@ test-stop tool:
 
 test-run tool:
     cd <path-to-tools-dir>/{{tool}} && ./test.sh run
+
+test-dev tool:
+    cd <path-to-tools-dir>/{{tool}} && ./test.sh dev
 ```
 
 Where `<path-to-tools-dir>` matches the existing recipes' path convention (`tools/` when running from `offchain/`, `offchain/tools/` when running from the repo root).

@@ -5,6 +5,7 @@
 #   ./test.sh start [--port N]   build and start the server; print curl examples
 #   ./test.sh stop  [--port N]   stop the server
 #   ./test.sh run   [--port N]   start, send one sample request, stop
+#   ./test.sh dev   [--port N]   start and stream logs; Ctrl+C stops the server
 set -euo pipefail
 
 TOOL_NAME="__TOOL_NAME__"
@@ -114,11 +115,43 @@ send_sample_request() {
     fi
 }
 
+dev_mode() {
+    start_server
+    print_curl_examples
+    local server_pid
+    server_pid=$(cat "$PID_FILE")
+    echo "► Streaming logs (Ctrl+C to stop server)..."
+    # Prefer GNU tail --pid (exits automatically when the server process dies).
+    # gtail = GNU tail via Homebrew on macOS; plain tail on Linux is usually GNU.
+    local tail_bin=""
+    if command -v gtail >/dev/null 2>&1; then
+        tail_bin="gtail"
+    elif tail --help 2>/dev/null | grep -q -- '--pid'; then
+        tail_bin="tail"
+    fi
+    if [[ -n "$tail_bin" ]]; then
+        trap 'stop_server; exit 0' INT TERM
+        "$tail_bin" -f --pid="$server_pid" "$LOG_FILE"
+    else
+        # BSD tail (macOS without gtail): background tail + poll loop
+        tail -f "$LOG_FILE" &
+        local tail_pid=$!
+        trap 'kill "$tail_pid" 2>/dev/null; stop_server; exit 0' INT TERM
+        while kill -0 "$server_pid" 2>/dev/null; do
+            sleep 0.5
+        done
+        kill "$tail_pid" 2>/dev/null
+    fi
+    echo "  Server stopped."
+    stop_server
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 case "$SUBCMD" in
     start) start_server; print_curl_examples ;;
     stop)  stop_server ;;
     run)   start_server; send_sample_request; stop_server ;;
-    *)     echo "Usage: $0 {start|stop|run} [--port N]" >&2; exit 1 ;;
+    dev)   dev_mode ;;
+    *)     echo "Usage: $0 {start|stop|run|dev} [--port N]" >&2; exit 1 ;;
 esac
