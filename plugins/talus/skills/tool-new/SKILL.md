@@ -123,7 +123,7 @@ If none of these can produce the templates (offline, no clone, no `gh`, no WebFe
 
 ### Phase 4 — Generate files
 
-Use the Write tool for new files (not Edit). Mirror the structure of upstream `tools/math` but as a single-tool crate.
+Use the Write tool for new files (not Edit). The `Cargo.toml` is generated inline based on upstream patterns read in Phase 3; the three source files (`main.rs`, `<tool_name_snake>.rs`, `README.md`) come from templates in this skill's own repo, fetched and substituted as described below.
 
 #### `<target-dir>/Cargo.toml`
 
@@ -131,83 +131,39 @@ Use the Write tool for new files (not Edit). Mirror the structure of upstream `t
   - **nexus-tools mode only:** also add `[build-dependencies]` with `serde_json.workspace = true` and `toml = "0.8"` — required by `build.rs`, which parses both `tools.json` and `Cargo.toml` at compile time. For `[[bin]]` and the FQN version threading, see Phase 4.5.
 - **Standalone mode:** use explicit values from the upstream workspace `[workspace.package]` and `[workspace.dependencies]` sections. Pin `nexus-sdk` and `nexus-toolkit` to the same `git` + `tag` upstream uses (read these from the fetched workspace `Cargo.toml`, never hardcode).
 
-#### `<target-dir>/src/main.rs`
+#### `<target-dir>/src/main.rs`, `<target-dir>/src/<tool_name_snake>.rs`, `<target-dir>/README.md`
 
-```rust
-#![doc = include_str!("../README.md")]
+These three files come from templates in this skill's own repo. Fetch each from `Talus-Network/claude` using the same preference order as Phase 3 (`gh api` → WebFetch):
 
-use nexus_toolkit::bootstrap;
+| Template | Target path |
+|---|---|
+| `plugins/talus/skills/tool-new/templates/main.rs` | `<target-dir>/src/main.rs` |
+| `plugins/talus/skills/tool-new/templates/tool.rs` | `<target-dir>/src/<tool_name_snake>.rs` |
+| `plugins/talus/skills/tool-new/templates/README.md` | `<target-dir>/README.md` |
 
-mod <tool_name_snake>;
+Each template contains `__PLACEHOLDER__` markers. Substitute every marker before writing:
 
-#[tokio::main]
-async fn main() {
-    bootstrap!([<tool_name_snake>::<tool_name_pascal>])
-}
+| Placeholder | Value |
+|---|---|
+| `__TOOL_NAME_SNAKE__` | `tool_name` with hyphens → underscores |
+| `__TOOL_NAME_PASCAL__` | PascalCase of `__TOOL_NAME_SNAKE__` |
+| `__FQN_PREFIX__` | `fqn_prefix` from Phase 2 |
+| `__DESCRIPTION__` | `description` from Phase 2 |
+| `__COMPUTED_FQN__` | `<fqn_prefix>.<tool_name_snake>@1` |
+
+After writing each file, confirm no markers remain. If any are present, the substitution missed something — fix before continuing:
+
+```
+grep -l '__[A-Z_]*__' <target-dir>/src/main.rs <target-dir>/src/<tool_name_snake>.rs <target-dir>/README.md
 ```
 
-Use the array form `bootstrap!([...])` even for a single tool — matches the shape of upstream `tools/math/src/main.rs` and lets the user append a second tool later without rewriting the call.
+Empty output = success.
 
-#### `<target-dir>/src/<tool_name_snake>.rs`
+**Mode-specific edits after substitution:**
 
-Mirror the structure of upstream `tools/math/src/i64/add.rs`:
-
-- Module doc comment starting with the FQN
-- `use` block (`nexus_sdk::{fqn, ToolFqn}`, `nexus_toolkit::*`, `schemars::JsonSchema`, `serde::{Deserialize, Serialize}`)
-- `pub(crate) struct Input` with `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`. Put one placeholder field — e.g., `placeholder: String` — that the user will replace in the guide phase. Mark with a `// TODO:` so it's easy to find. **Never add a secret (API key, private key, OAuth token, signing material) as an Input field** — Input ports are propagated on-chain by the Nexus runtime and are permanently visible.
-- Whenever it is apparent that the tool will need a secret — whether stated in the user's description or inferred by the agent during analysis (e.g., the tool calls an external API that requires authentication) — add a `// SECURITY: read secret from env var, never from Input` comment at the top of `async fn invoke`, followed by a commented-out example:
-  ```rust
-  // let api_key = match std::env::var("API_KEY") {
-  //     Ok(v) => v,
-  //     Err(_) => return Output::ErrConfig { reason: "API_KEY env var not set".to_string() },
-  // };
-  // log::debug!(target: "<tool_name_snake>", "env var API_KEY loaded");  // name only, never value
-  ```
-  Do not use `?` here — `invoke` returns `Self::Output`, not `Result`. Errors must be returned as `Output::Err*` variants. Do not add the secret as an Input field.
-- `pub(crate) enum Output` with `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`. Two variants:
-  - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
-  - `Err { reason: String }`
-- `pub(crate) struct <tool_name_pascal>;`
-- `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str { "/<tool_name_snake>" }` — explicitly overrides the trait default (`""`) so the tool occupies its own URL namespace and multiple tools can share a binary without path conflicts, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body explicitly destructures the placeholder field, emits a debug log, and returns the placeholder error so the input isn't dead code:
-  ```rust
-  let Input { placeholder } = input;
-  log::debug!(target: "<tool_name_snake>", "invoke called: placeholder={:?}", placeholder);
-  Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }
-  ```
-  The user replaces the body in the guide phase.
-  - **Generic workspace / standalone:** `fn fqn() -> ToolFqn { fqn!("<fqn_prefix>.<tool_name_snake>@1") }`
-  - **nexus-tools mode:** `fn fqn() -> ToolFqn { fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION"))) }` — the `env!` value is emitted by `build.rs` from the Docker build arg at CI time, and defaults to `"1"` for local builds.
-- Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok` and `Err`), plus one health check. The scaffold variants are placeholders the user will replace, but having one test per variant from the start establishes the pattern and ensures both paths compile. Use `assert!(matches!(output, Output::Err { .. }))` style so failures localize easily.
-
-#### `<target-dir>/README.md`
-
-FQN-titled section following the upstream pattern (see `tools/math/README.md`):
-
-```markdown
-# `<computed_fqn>`
-
-<one-line description>
-
-## Input
-
-**`placeholder`: [`String`]**
-
-TODO: describe the real input port(s) once the schema is finalized.
-
-## Output Variants & Ports
-
-**`ok`**
-
-TODO: describe the success variant.
-
-- **`ok.result`: [`String`]** — placeholder.
-
-**`err`**
-
-Returned on any failure.
-
-- **`err.reason`: [`String`]** — human-readable reason for the failure.
-```
+- **nexus-tools mode:** in `src/<tool_name_snake>.rs`, switch the `fqn!()` form — the template has both lines side-by-side; delete the generic `fqn!("...@1")` line and uncomment the `fqn!(concat!(...))` line. The version is then threaded from `build.rs` (see Phase 4.5).
+- **No secrets needed:** if analysis of the tool description finds no plausible required env var, empty the body of `validate_config` and delete the `EXAMPLE_API_KEY` static, the `example_api_key()` accessor, and `load_required` (if nothing else calls it). Do not delete `validate_config` itself — `main.rs` calls it unconditionally.
+- **Additional secrets:** to add more env vars, declare another `static <NAME>: OnceLock<String>` and accessor, and add another `.set(load_required("<NAME>"))` line to `validate_config`. Follow the EXAMPLE_API_KEY pattern exactly.
 
 ### Phase 4.5 — nexus-tools additional files (nexus-tools mode only)
 

@@ -15,19 +15,25 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] First line is `#![doc = include_str!("../README.md")]`
 - [ ] `use nexus_toolkit::bootstrap;` import
 - [ ] `mod <tool_name_snake>;` declaration
+- [ ] `let _ = nexus_toolkit::env_logger::try_init();` called before `validate_config` so `log::*` calls work during startup
+- [ ] `<tool_name_snake>::validate_config();` called before `bootstrap!`
 - [ ] `#[tokio::main] async fn main()` with `bootstrap!([<tool_name_snake>::<tool_name_pascal>])` — array form even for a single tool, matching upstream `tools/math/src/main.rs`
 
 ## `<target-dir>/src/<tool_name_snake>.rs`
 
 - [ ] Module doc comment starts with the FQN in backticks
-- [ ] `use` block: `nexus_sdk::{fqn, ToolFqn}`, `nexus_toolkit::*`, `schemars::JsonSchema`, `serde::{Deserialize, Serialize}`
+- [ ] `use` block: `nexus_sdk::{fqn, ToolFqn}`, `nexus_toolkit::*`, `schemars::JsonSchema`, `serde::{Deserialize, Serialize}`, `std::sync::OnceLock`
+- [ ] `pub(crate) fn validate_config()` is present; reads every required env var at startup via `load_required` and stores each in its `OnceLock` static. Aborts via `log::error!` + `std::process::exit(1)` — no `eprintln!`
+- [ ] One `static <NAME>: OnceLock<String>` per secret env var, with a matching `<NAME>.set(load_required("<NAME>")).expect(...)` line inside `validate_config`
+- [ ] One private accessor function per secret env var; returns the cached value via `.get().expect(...)` — never calls `std::env::var`
 - [ ] `Input` struct has `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`
 - [ ] `Output` enum has `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`
-- [ ] `Output` has at least one success variant and at least one `err`-prefixed variant
+- [ ] `Output` has at least one success variant, `ErrUpstream`, and `ErrConfig`
 - [ ] `impl NexusTool` provides: `type Input`, `type Output`, `async fn new`, `fn fqn`, `fn path`, `fn description`, `async fn health`, `async fn invoke`
 - [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_snake>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION")))`
 - [ ] `invoke()` does **not** return `Result` — failures are returned as `Output::Err*` variants
-- [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok` and `Err`) plus one health check
+- [ ] `invoke()` accesses secrets via module-level accessors, not `std::env::var` directly
+- [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok`, `ErrUpstream`, and `ErrConfig`) plus one health check
 
 ## `<target-dir>/README.md`
 
@@ -56,7 +62,7 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] All four `__PLACEHOLDER__` markers are substituted — no `__` strings remain in the file
 - [ ] `SAMPLE_JSON` is valid JSON, reflects the actual Input fields, and contains no placeholder strings
 - [ ] `./test.sh run` starts the server, gets a response, and stops cleanly
-- [ ] **Workspace mode with `just`:** `test-start`, `test-stop`, `test-run` recipes present in `tools/.just` and `just --list` produces no errors
+- [ ] **Workspace mode with `just`:** `test-start`, `test-stop`, `test-run`, `test-dev` recipes present in `tools/.just` and `just --list` produces no errors
 
 ## Verification
 
@@ -68,4 +74,5 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] All output variant names are snake_case; failure variants are prefixed `err`
 - [ ] Output ports have no nested objects — flat structure
 - [ ] Crucial output ports are not `Option<...>` — return an `err` variant instead
-- [ ] Read every field name in the `Input` struct. Any name containing `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar is a violation — remove the field and read the value via `std::env::var(...)` in `invoke` (or `new`) instead. Input ports go on-chain and are permanently visible.
+- [ ] Read every field name in the `Input` struct. Any name containing `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar is a violation — remove the field, add a `static <NAME>: OnceLock<String>` declaration, a `.set(load_required("<NAME>"))` line in `validate_config`, and an accessor function. Input ports go on-chain and are permanently visible.
+- [ ] No direct `std::env::var` calls inside `invoke` or `new` — all env var access goes through the module-level accessor functions generated in the config section.
