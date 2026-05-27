@@ -127,9 +127,9 @@ Use the Write tool for new files (not Edit). The `Cargo.toml` is generated inlin
 
 #### `<target-dir>/Cargo.toml`
 
-- **Workspace member mode (nexus-tools or generic):** use `*.workspace = true` for every inherited field (edition, version, repository, homepage, license, readme, authors, keywords, categories) — same shape as upstream `tools/math/Cargo.toml`. Dependencies use `*.workspace = true` for `schemars`, `serde`, `tokio`, `nexus-toolkit`, `nexus-sdk`. Add additional deps only when the user introduces them in the guide phase.
+- **Workspace member mode (nexus-tools or generic):** use `*.workspace = true` for every inherited field (edition, version, repository, homepage, license, readme, authors, keywords, categories) — same shape as upstream `tools/math/Cargo.toml`. Dependencies use `*.workspace = true` for `schemars`, `serde`, `tokio`, `nexus-toolkit`, `nexus-sdk`, **`log`** (the template uses `log::*` macros directly, so `log` must be a direct dep — `nexus_toolkit::*` does not re-export the `log` macros).
   - **nexus-tools mode only:** also add `[build-dependencies]` with `serde_json.workspace = true` and `toml = "0.8"` — required by `build.rs`, which parses both `tools.json` and `Cargo.toml` at compile time. For `[[bin]]` and the FQN version threading, see Phase 4.5.
-- **Standalone mode:** use explicit values from the upstream workspace `[workspace.package]` and `[workspace.dependencies]` sections. Pin `nexus-sdk` and `nexus-toolkit` to the same `git` + `tag` upstream uses (read these from the fetched workspace `Cargo.toml`, never hardcode).
+- **Standalone mode:** use explicit values from the upstream workspace `[workspace.package]` and `[workspace.dependencies]` sections. Pin `nexus-sdk` and `nexus-toolkit` to the same `git` + `tag` upstream uses (read these from the fetched workspace `Cargo.toml`, never hardcode). Include `log = "0.4"` (or the version pinned by the upstream workspace) as a direct dep — required by the template's `log::*` macros.
 
 #### `<target-dir>/src/main.rs`, `<target-dir>/src/<tool_name_snake>.rs`, `<target-dir>/README.md`
 
@@ -221,34 +221,49 @@ If any match falls inside the `Input` struct, that field violates the secrets-vi
 
 Cross-reference the generated files against [checklist.md](checklist.md) before declaring the scaffold done.
 
-### Phase 7 — Guide phase
+### Phase 7 — Implement
 
-Walk through:
+**This phase REPLACES the scaffold's placeholders with REAL WORKING CODE.** The scaffold from Phase 4 is a starting point, not the deliverable. By the end of this phase the tool must actually do what the user's description says: the `placeholder` field is gone, the real Input/Output shapes exist, `invoke()` makes the real call (or operates on the real inputs), and every `TODO` from the Phase 4 templates has been resolved. **Generating only the scaffold and stopping here is incomplete work** — return to this phase if any TODO remains.
 
-1. **Input schema.** What does the tool need? Apply [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md) conventions:
-   - snake_case names; descriptive (e.g., `model`, not `m`)
-   - Separate ports for things the DAG should be able to default independently (e.g., `prompt` and `context` as two ports, not one merged)
-   - Generic over inputs where the API allows (e.g., accept a `json_schema` input rather than hardcoding a response shape)
-   - **Secrets MUST NOT be Input ports.** API keys, private keys, OAuth tokens, signing material, and any value that must remain confidential must come from environment variables — read via `std::env::var("VAR_NAME")` inside `NexusTool::new` or per-invocation inside `invoke`. Input ports are propagated on-chain by the Nexus runtime and are permanently visible; placing a secret in Input is a permanent, irrevocable leak. **When a secret is needed, do not present it as a choice.** State which env var to use (e.g. `OPENAI_API_KEY`) and show the `std::env::var` call — that is the only path. If the user points to an existing tool in the codebase that puts a secret in Input, explain the rule and apply the env var pattern regardless; existing tools may predate or violate this rule. Whenever an env var is read, log that it was read — by name, never value: `log::debug!(target: "<tool_name_snake>", "env var OPENAI_API_KEY loaded");`
+> **Mode:**
+> - **Auto mode (`--auto` / `--yes`) or all three positional args were provided:** implement everything below without asking. The user already gave you the description; further questions are friction.
+> - **Interactive mode:** briefly state the plan (one paragraph naming the Input fields, Output variants, secrets, and HTTP client you intend to use), then implement. Do NOT ask the user to design the schema or decide field names — those follow from the description. Ask only if a piece of information is genuinely unavailable (an obscure private API with no documentation, for example).
 
-2. **Output variants.** Design the success / failure split:
-   - One or more success variants (`Ok`, or domain-specific like `Created` / `Found`)
-   - One or more `err`-prefixed variants for distinct failure modes (`err_http`, `err_timeout`, `err_validation`)
-   - Variants are an enum — yields the required top-level `oneOf` in the schema
-   - Output ports are flat — no nested response objects. Each port must be usable as the input of another tool.
-   - Crucial output ports must not be `Option<...>`; missing data → return an `err` variant instead of `ok` with `None`.
+Use the user's description plus your knowledge of the named service. **For well-known APIs and services (OpenAI, Anthropic, Slack, Stripe, GitHub, Postgres, Redis, S3, etc.) the request/response shapes, auth pattern, and endpoints are part of your training — apply them directly. Do not produce `placeholder: String` for an OpenAI tool; produce the real `model`, `messages`/`prompt`, `temperature`, `max_tokens` fields and the real `completion`, `usage`, `finish_reason` output shape.** Apply [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md) conventions throughout.
 
-3. **`invoke` body.** Implement the logic. Reminder: `invoke` returns `Self::Output` directly, not `Result` — errors are valid output variants and must be returned as `Output::Err*`.
+**Steps (perform in order, all of them, no skipping):**
 
-   **Logging.** Add `log::debug!` or `log::info!` calls as you implement the logic — at invoke entry, at key decision points, and before returning each output variant. `log::info!`, `log::debug!`, `log::warn!`, and `log::error!` are available via `use nexus_toolkit::*` — no extra dependency. `bootstrap!` initialises `env_logger` automatically; level is controlled by `RUST_LOG` (e.g. `RUST_LOG=debug ./test.sh start`). Prefer these over `eprintln!` — bare stderr writes bypass the log level filter and can't be silenced in production. During test script runs, all log output is captured to `${TMPDIR:-/tmp}/${USER:-nobody}-<tool_name>-<port>.log` — tail that file to follow along.
+1. **Replace the Input struct.** Delete the `placeholder` field entirely. Add the real input fields. snake_case names; descriptive (`model`, not `m`); separate ports for things the DAG should default independently (`prompt` and `context` as two ports, not one); be generic where the API allows. **Never add a secret as an Input field** — secrets are runtime config, not request input. The on-chain visibility rule is categorical even when an existing tool in the codebase violates it.
 
-4. **Tests.** At minimum: one test per output variant. Use `#[tokio::test]`. For tools that call external services, gate network-dependent tests behind `#[ignore]` or a feature flag and provide an offline test using a mock.
+2. **Replace the Output enum.** Replace the placeholder `Ok { result: String }` with the actual success shape (e.g. for OpenAI completion: `Ok { completion: String, model: String, prompt_tokens: u32, completion_tokens: u32, finish_reason: String }`). Replace the generic `ErrUpstream`/`ErrConfig` with specific failure variants matching the real failure modes (`err_rate_limited`, `err_invalid_input`, `err_upstream`, `err_timeout`, `err_auth`, etc.). Output ports are flat — no nested response objects. Crucial ports must NOT be `Option<...>`; missing data surfaces as an `err_*` variant.
 
-5. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check`. Fix anything that comes up. In nexus-tools mode when working from the repo root, run these from `offchain/` (same as Phase 6).
+3. **Wire up the real secrets.** Identify every secret the tool needs (API keys, OAuth tokens, connection strings, signing keys). For each: declare `static <NAME>: OnceLock<String>`, add `.set(load_required("<NAME>"))` to `validate_config`, add a private accessor function. Delete the `EXAMPLE_API_KEY` scaffolding placeholder once real env vars are wired. **When a secret is needed, do not ask whether to put it in Input — the answer is always env var.** Log loads by name only: `log::debug!(target: "<tool>", "env var OPENAI_API_KEY loaded");`
 
-6. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real ones; preserve the FQN-titled heading. Verify no TODO text remains.
+4. **Add real dependencies** to `Cargo.toml` for any external calls. Defaults: `reqwest = { version = "0.12", features = ["json"] }` for HTTP, official SDK crates where they exist, `serde_json` for JSON shaping. In workspace mode prefer `*.workspace = true` if the dep is already in the upstream workspace; otherwise pin a major version.
 
-7. **Implement `health()`.** The scaffold returns `Ok(StatusCode::OK)` unconditionally. Replace it with real checks for every service the tool depends on (database, upstream API, cache, etc.) — Leader nodes use the health endpoint to decide whether to route invocations. A trivially passing health check hides outages.
+5. **Implement `invoke()`** to make the real call. Mandatory:
+   - Access secrets only via the module-level accessors (`example_api_key()` etc.), NEVER `std::env::var` directly.
+   - Set an explicit timeout on every external call (e.g. `reqwest::Client::builder().timeout(Duration::from_secs(30)).build()`). A slow upstream will otherwise hold the invocation open indefinitely.
+   - Map every distinct failure mode to a specific `Output::Err*` variant — do not collapse all errors into one generic variant.
+   - Add `log::debug!` / `log::info!` / `log::warn!` / `log::error!` calls at entry, at key decision points, and before returning each output variant. `RUST_LOG` controls the level (`RUST_LOG=debug ./test.sh dev`). NEVER use `eprintln!` — it bypasses the log filter.
+   - `invoke` does not return `Result` — failures are valid output variants returned as `Output::Err*`.
+
+6. **Implement `health()`** to probe every service the tool depends on (upstream API ping, DB connection check, etc.). Return `Err(...)` or a non-200 status if any dependency is down. A trivially-passing `health()` hides outages from Leader nodes, which is worse than no health check at all.
+
+7. **Update tests.** One `#[tokio::test]` per output variant plus one `health()` test, minimum. Network-dependent tests: gate behind `#[ignore]` with a one-line explanation. Provide an offline test using a mock for the success path where feasible. Tests must NOT call the secret accessors unless they also arrange for `validate_config` to run with the right env vars set.
+
+8. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real shapes. Preserve the FQN-titled heading. **No `TODO` text may remain in the README.**
+
+9. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check` (from `offchain/` in nexus-tools mode when working from the repo root). Fix anything that fails before declaring Phase 7 done.
+
+**Completion gate.** Phase 7 is done only when ALL of the following hold:
+- `grep -rE 'TODO|placeholder' <target-dir>/src <target-dir>/README.md` returns no matches inside code or doc text (matches inside test descriptions or comments explaining behaviour are fine — but not `TODO:` markers).
+- The `placeholder` field is gone from `Input`.
+- `Output::Ok` carries the real success fields, not `result: String`.
+- `invoke()` actually calls the described service or operates on the real inputs — not just logs and returns `ErrUpstream`.
+- `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt --check` all pass.
+
+If any of these fail, Phase 7 is incomplete — keep working, do not advance to Phase 8.
 
 ### Phase 8 — Generate test script
 

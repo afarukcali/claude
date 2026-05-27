@@ -82,8 +82,8 @@ impl NexusTool for __TOOL_NAME_PASCAL__ {
     type Input = Input;
     type Output = Output;
 
-    async fn new(_input: &Self::Input) -> AnyResult<Self> {
-        Ok(Self)
+    async fn new() -> Self {
+        Self
     }
 
     fn fqn() -> ToolFqn {
@@ -101,14 +101,14 @@ impl NexusTool for __TOOL_NAME_PASCAL__ {
         "__DESCRIPTION__"
     }
 
-    async fn health(_: &()) -> AnyResult<StatusCode> {
+    async fn health(&self) -> AnyResult<StatusCode> {
         // TODO: probe every service this tool depends on.
         // Return Err(...) if any dependency is unhealthy — leader nodes use
         // this endpoint to decide whether to route invocations.
         Ok(StatusCode::OK)
     }
 
-    async fn invoke(self, input: Self::Input) -> Self::Output {
+    async fn invoke(&self, input: Self::Input) -> Self::Output {
         let Input { placeholder } = input;
         log::debug!(target: "__TOOL_NAME_SNAKE__", "invoke called: placeholder={:?}", placeholder);
 
@@ -139,8 +139,9 @@ mod tests {
     /// regressions if the variant name or return type changes.
     #[tokio::test]
     async fn invoke_returns_err_upstream() {
+        let tool = __TOOL_NAME_PASCAL__::new().await;
         let input = Input { placeholder: "test".to_string() };
-        let output = __TOOL_NAME_PASCAL__.invoke(input).await;
+        let output = tool.invoke(input).await;
         assert!(matches!(output, Output::ErrUpstream { .. }));
     }
 
@@ -148,7 +149,8 @@ mod tests {
     /// catches regressions before real dependency checks are wired.
     #[tokio::test]
     async fn health_returns_ok() {
-        let status = __TOOL_NAME_PASCAL__::health(&()).await.unwrap();
+        let tool = __TOOL_NAME_PASCAL__::new().await;
+        let status = tool.health().await.unwrap();
         assert_eq!(status, StatusCode::OK);
     }
 }

@@ -9,6 +9,7 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] **If workspace member:** every inherited field uses `*.workspace = true` (edition, version, repository, homepage, license, readme, authors, keywords, categories) — matches upstream `tools/math/Cargo.toml`
 - [ ] **If standalone:** explicit values for edition (matches upstream workspace's `edition`), version, license; explicit `git` + `tag` for `nexus-sdk` and `nexus-toolkit` matching the upstream workspace
 - [ ] `nexus-sdk` and `nexus-toolkit` versions match upstream's `[workspace.dependencies]` (re-read at invocation time, never hardcoded)
+- [ ] `log` is a direct dep (`log.workspace = true` or `log = "0.4"`) — the template uses `log::*` macros which are not re-exported by `nexus_toolkit::*`
 
 ## `<target-dir>/src/main.rs`
 
@@ -29,11 +30,18 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] `Input` struct has `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`
 - [ ] `Output` enum has `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`
 - [ ] `Output` has at least one success variant, `ErrUpstream`, and `ErrConfig`
-- [ ] `impl NexusTool` provides: `type Input`, `type Output`, `async fn new`, `fn fqn`, `fn path`, `fn description`, `async fn health`, `async fn invoke`
+- [ ] `impl NexusTool` provides — with exactly these signatures:
+  - [ ] `type Input`, `type Output`
+  - [ ] `async fn new() -> Self` (no args, no Result)
+  - [ ] `fn fqn() -> ToolFqn`
+  - [ ] `fn path() -> &'static str`
+  - [ ] `fn description() -> &'static str`
+  - [ ] `async fn health(&self) -> AnyResult<StatusCode>` — note `&self`, not `&()`
+  - [ ] `async fn invoke(&self, input: Self::Input) -> Self::Output` — note `&self`, not `self`
 - [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_snake>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION")))`
 - [ ] `invoke()` does **not** return `Result` — failures are returned as `Output::Err*` variants
 - [ ] `invoke()` accesses secrets via module-level accessors, not `std::env::var` directly
-- [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok`, `ErrUpstream`, and `ErrConfig`) plus one health check
+- [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok`, `ErrUpstream`, and `ErrConfig`) plus one health check. Each test constructs the tool via `__TOOL_NAME_PASCAL__::new().await` (not by bare struct literal) so the construction path is exercised.
 
 ## `<target-dir>/README.md`
 
