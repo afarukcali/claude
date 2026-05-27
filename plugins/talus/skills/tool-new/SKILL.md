@@ -1,15 +1,15 @@
 ---
 name: tool-new
-description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
+description: Scaffold a new Nexus Tool in Rust and implement it end-to-end based on the user's description. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates; the NexusTool trait signatures are taken from upstream math/src/i64/add.rs at every invocation. After the scaffold compiles, replaces the placeholder Input/Output and invoke() logic with the real implementation — for well-known APIs (OpenAI, Anthropic, etc.) it applies the actual request/response shapes directly rather than asking the user to design the schema. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[--auto] [tool-name] [fqn-prefix] [description]"
-allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *) Bash(grep -r *) Bash(gh api *)
+allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep *) Bash(sed -n *) Bash(gh api *)
 ---
 
 # `tool-new` — scaffold a new Nexus Tool in Rust
 
 A Nexus Tool is an HTTPS service that implements the `NexusTool` trait from the `nexus-toolkit` crate. The canonical reference is [Talus-Network/nexus-tools](https://github.com/Talus-Network/nexus-tools). The authoritative development guidelines live in [docs/tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/tool-development.md) and [docs/toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md) in the SDK repo.
 
-This skill scaffolds a working skeleton, then guides the user through writing real logic.
+This skill scaffolds a working skeleton, then implements the real Input/Output and invoke() logic based on the user's description. The `NexusTool` trait signatures used in the generated code come from upstream `tools/math/src/i64/add.rs` (fetched at every invocation) — never from a baked-in copy of the trait.
 
 ## Arguments
 
@@ -85,7 +85,7 @@ Resolve each value:
   - *Interactive:* ask if not provided. **Never invent or default this without asking.**
   - *Auto mode:* if not provided, scan existing tool source files for `fqn!(` calls (`grep -r 'fqn!(' . --include='*.rs'`) and extract the common prefix (everything before the last `.`-separated segment and `@`). If a single consistent prefix is found, use it. If ambiguous or not found, use `com.example` and print a warning that the user must update it before publishing. Print the resolved prefix. Do not ask for confirmation.
 
-- **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`. Ask if missing in both interactive and auto mode — there is no reasonable default.
+- **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`. Ask if missing in both interactive and auto mode — there is no reasonable default. **Validate: must not contain `"` (double quote) or `\` (backslash).** The description is substituted unescaped into a Rust string literal (`fn description() -> &'static str { "..." }`) and a TOML string (`[package].description = "..."`) — either character breaks the generated file. If the user-provided description contains one, ask them to rephrase (e.g. replace `Says "hello"` with `Says hello (with quotes)`); in auto mode print the rejection reason and stop rather than silently mangling.
 
 - **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`).
   - *Interactive:* ask the user to confirm before proceeding. In nexus-tools mode note that the literal `@1` is the local-development default; CI threads the real version via `build.rs`.
@@ -159,9 +159,18 @@ grep -l '__[A-Z_]*__' <target-dir>/src/main.rs <target-dir>/src/<tool_name_snake
 
 Empty output = success.
 
+**Verify trait signatures against upstream (mandatory).**
+
+The template carries a working `impl NexusTool for ...` block, but the `NexusTool` trait can evolve in upstream. After substitution, compare every method signature in the generated `src/<tool_name_snake>.rs`'s `impl NexusTool` block against the same methods in the math reference tool fetched in Phase 3 (`offchain/tools/math/src/i64/add.rs`). For each method (`new`, `fqn`, `path`, `description`, `health`, `invoke`):
+
+- The argument list, receiver (`self`, `&self`, none), return type, and `async`-ness must match math/add.rs exactly.
+- If our template's signature differs from upstream, **upstream wins** — update the generated file to match. The template may lag.
+
+This means math/add.rs is the source of truth for trait method shapes at every invocation, not anything baked into this skill.
+
 **Mode-specific edits after substitution:**
 
-- **nexus-tools mode:** in `src/<tool_name_snake>.rs`, switch the `fqn!()` form — the template has both lines side-by-side; delete the generic `fqn!("...@1")` line and uncomment the `fqn!(concat!(...))` line. The version is then threaded from `build.rs` (see Phase 4.5).
+- **nexus-tools mode:** in `src/<tool_name_snake>.rs`, switch the `fqn!()` form. The template's `fn fqn()` body has four lines: a `// Generic workspace / standalone:` comment, the active `fqn!("...@1")` call, a `// nexus-tools mode — uncomment...` comment, and a commented-out `// fqn!(concat!(...))` line. Delete the first three lines entirely and uncomment the last one, leaving only the `fqn!(concat!(...))` call. The version is then threaded from `build.rs` (see Phase 4.5).
 - **No secrets needed:** if analysis of the tool description finds no plausible required env var, empty the body of `validate_config` and delete the `EXAMPLE_API_KEY` static, the `example_api_key()` accessor, and `load_required` (if nothing else calls it). Do not delete `validate_config` itself — `main.rs` calls it unconditionally.
 - **Additional secrets:** to add more env vars, declare another `static <NAME>: OnceLock<String>` and accessor, and add another `.set(load_required("<NAME>"))` line to `validate_config`. Follow the EXAMPLE_API_KEY pattern exactly.
 
@@ -211,13 +220,23 @@ If it fails, diagnose and fix before proceeding. Common failure modes:
 - `tool_name` contains characters Cargo rejects → re-prompt for a valid name.
 - Pre-existing directory at the target path → never overwrite without confirmation.
 
-Before cross-referencing the checklist, scan the generated `src/<tool_name_snake>.rs` for secret-sounding field names:
+Before cross-referencing the checklist, scan the generated `Input` struct for secret-sounding field names. The grep is scoped to the `Input` struct only, so the OnceLock statics and accessor functions outside it (which legitimately contain `key`, `secret`, etc.) don't show up as false positives. Uses ERE (`-E`) for portable alternation across GNU and BSD grep:
 
 ```
-grep -i 'key\|token\|secret\|password\|credential\|private\|auth' src/<tool_name_snake>.rs
+sed -n '/struct Input/,/^}/p' src/<tool_name_snake>.rs \
+  | grep -iE 'key|token|secret|password|credential|private|auth'
 ```
 
-If any match falls inside the `Input` struct, that field violates the secrets-via-env rule. Remove it from `Input`, add a `std::env::var("VAR_NAME")` call in `invoke` (and in `new` if the value is needed at construction time), and rerun `cargo check`. Matches inside `Output`, `impl NexusTool`, or `tests` are not violations.
+If anything matches, that field violates the secrets-via-env rule. Fix it with the OnceLock+accessor pattern (NOT direct `std::env::var` in `invoke`):
+
+1. Remove the field from `Input`.
+2. Add `static <NAME>: OnceLock<String> = OnceLock::new();` to the config section.
+3. Add `<NAME>.set(load_required("<NAME>")).expect("validate_config called twice");` to `validate_config()`.
+4. Add a private accessor: `fn <name>() -> &'static str { <NAME>.get().expect("validate_config must run before any accessor") }`.
+5. Replace any reference to the old Input field with a call to the accessor in `invoke`.
+6. Rerun `cargo check`.
+
+`new()` takes no arguments (per the trait); it cannot read per-request secrets. All env vars are read once at startup by `validate_config`.
 
 Cross-reference the generated files against [checklist.md](checklist.md) before declaring the scaffold done.
 
@@ -237,28 +256,60 @@ Use the user's description plus your knowledge of the named service. **For well-
 
 2. **Replace the Output enum.** Replace the placeholder `Ok { result: String }` with the actual success shape (e.g. for OpenAI completion: `Ok { completion: String, model: String, prompt_tokens: u32, completion_tokens: u32, finish_reason: String }`). Replace the generic `ErrUpstream`/`ErrConfig` with specific failure variants matching the real failure modes (`err_rate_limited`, `err_invalid_input`, `err_upstream`, `err_timeout`, `err_auth`, etc.). Output ports are flat — no nested response objects. Crucial ports must NOT be `Option<...>`; missing data surfaces as an `err_*` variant.
 
-3. **Wire up the real secrets.** Identify every secret the tool needs (API keys, OAuth tokens, connection strings, signing keys). For each: declare `static <NAME>: OnceLock<String>`, add `.set(load_required("<NAME>"))` to `validate_config`, add a private accessor function. Delete the `EXAMPLE_API_KEY` scaffolding placeholder once real env vars are wired. **When a secret is needed, do not ask whether to put it in Input — the answer is always env var.** Log loads by name only: `log::debug!(target: "<tool>", "env var OPENAI_API_KEY loaded");`
+3. **Wire up the real secrets.** Identify every secret the tool needs (API keys, OAuth tokens, connection strings, signing keys). For each: declare `static <NAME>: OnceLock<String>`, add `.set(load_required("<NAME>"))` to `validate_config`, add a private accessor function. Once real env vars are wired, delete every trace of the `EXAMPLE_API_KEY` scaffold — all three references: the `static EXAMPLE_API_KEY` declaration, the `EXAMPLE_API_KEY.set(...)` line inside `validate_config`, and the `example_api_key()` accessor function. **When a secret is needed, do not ask whether to put it in Input — the answer is always env var.** Log loads by name only: `log::debug!(target: "<tool>", "env var OPENAI_API_KEY loaded");`
+
+   **nexus-tools mode only:** also update `<target-dir>/tools.json`'s `"environment"` map to reflect the real env var names. The map drives the deployment pipeline's secret injection — if it lists `EXAMPLE_API_KEY` (or is empty) but the code calls `load_required("OPENAI_API_KEY")`, deployment will inject the wrong var and `validate_config` will exit at startup. Add one entry per real env var; remove any leftover `EXAMPLE_API_KEY` entry.
 
 4. **Add real dependencies** to `Cargo.toml` for any external calls. Defaults: `reqwest = { version = "0.12", features = ["json"] }` for HTTP, official SDK crates where they exist, `serde_json` for JSON shaping. In workspace mode prefer `*.workspace = true` if the dep is already in the upstream workspace; otherwise pin a major version.
 
-5. **Implement `invoke()`** to make the real call. Mandatory:
+5. **Implement `invoke()`** with the real logic. **Mandatory regardless of tool type:**
    - Access secrets only via the module-level accessors (`example_api_key()` etc.), NEVER `std::env::var` directly.
-   - Set an explicit timeout on every external call (e.g. `reqwest::Client::builder().timeout(Duration::from_secs(30)).build()`). A slow upstream will otherwise hold the invocation open indefinitely.
    - Map every distinct failure mode to a specific `Output::Err*` variant — do not collapse all errors into one generic variant.
    - Add `log::debug!` / `log::info!` / `log::warn!` / `log::error!` calls at entry, at key decision points, and before returning each output variant. `RUST_LOG` controls the level (`RUST_LOG=debug ./test.sh dev`). NEVER use `eprintln!` — it bypasses the log filter.
    - `invoke` does not return `Result` — failures are valid output variants returned as `Output::Err*`.
 
+   **Additional, only if the tool makes external calls (HTTP, DB, gRPC, message-bus, etc.):**
+   - Set an explicit timeout on every external call (e.g. `reqwest::Client::builder().timeout(Duration::from_secs(30)).build()`). A slow upstream otherwise holds the invocation open indefinitely.
+   - Wrap each I/O call so its failure modes map to specific `Output::Err*` variants — never let a raw HTTP/SDK error type leak as a string.
+
+   **Pure-computation tools** (math, parsing, encoding, pure transformation — like upstream `tools/math`) skip the external-call bullets entirely. The mandatory bullets still apply.
+
 6. **Implement `health()`** to probe every service the tool depends on (upstream API ping, DB connection check, etc.). Return `Err(...)` or a non-200 status if any dependency is down. A trivially-passing `health()` hides outages from Leader nodes, which is worse than no health check at all.
 
-7. **Update tests.** One `#[tokio::test]` per output variant plus one `health()` test, minimum. Network-dependent tests: gate behind `#[ignore]` with a one-line explanation. Provide an offline test using a mock for the success path where feasible. Tests must NOT call the secret accessors unless they also arrange for `validate_config` to run with the right env vars set.
+7. **Update tests.** One `#[tokio::test]` per output variant plus one `health()` test, minimum. Network-dependent tests: gate behind `#[ignore]` with a one-line explanation. Provide an offline test using a mock for the success path where feasible.
+
+   **Rename the scaffold tests when you replace variants.** The template tests are named `invoke_returns_err_upstream` and `health_returns_ok` and assert against `Output::ErrUpstream`. When step 2 replaces `ErrUpstream`/`ErrConfig` with specific variants, rename and rewrite the tests to match — every Output variant should have at least one test, named after the variant it exercises.
+
+   **Testing pattern for invoke() that uses accessors.** Skip this if the tool has no secrets (pure-computation tools that don't call any accessor — like upstream `tools/math`). For tools that do use accessors: once `invoke()` calls `example_api_key()` (or any accessor), tests that call `tool.invoke(input)` panic — the `OnceLock::get().expect(...)` fires because `validate_config` only runs in `main()`, not in `#[tokio::test]` runs. `validate_config` itself calls `std::process::exit(1)` on a missing var, which would kill the test runner. The idiomatic fix is to factor invoke's body into a private helper that takes the config as a parameter:
+
+   ```rust
+   async fn invoke(&self, input: Self::Input) -> Self::Output {
+       invoke_impl(input, example_api_key()).await
+   }
+
+   async fn invoke_impl(input: Input, api_key: &str) -> Output {
+       // all real logic here, parameterised on the config
+   }
+   ```
+
+   Tests then call `invoke_impl(Input { ... }, "test-key").await` directly — no env vars, no panics, no `validate_config`. Apply the same factoring to `health()` if it uses accessors. Network-dependent tests that genuinely require a real key still need `#[ignore]` + env-var setup at the developer's machine.
 
 8. **Update the README.** Replace the placeholder `Input` and `Output Variants & Ports` sections with the real shapes. Preserve the FQN-titled heading. **No `TODO` text may remain in the README.**
 
-9. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check` (from `offchain/` in nexus-tools mode when working from the repo root). Fix anything that fails before declaring Phase 7 done.
+9. **Verify.** Run `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check` (from `offchain/` in nexus-tools mode when working from the repo root). Fix anything that fails before declaring Phase 7 done. Also re-run the Phase 6 secrets scan against the real Input struct now that it has real fields (the Phase 4 scaffold had only `placeholder: String`, which was safe by construction — only post-step-1 Input fields can carry secrets violations):
 
-**Completion gate.** Phase 7 is done only when ALL of the following hold:
-- `grep -rE 'TODO|placeholder' <target-dir>/src <target-dir>/README.md` returns no matches inside code or doc text (matches inside test descriptions or comments explaining behaviour are fine — but not `TODO:` markers).
-- The `placeholder` field is gone from `Input`.
+   ```
+   sed -n '/struct Input/,/^}/p' <target-dir>/src/<tool_name_snake>.rs \
+     | grep -iE 'key|token|secret|password|credential|private|auth'
+   ```
+
+   Any match is a violation — apply the Phase 6 remediation steps (move to OnceLock+accessor).
+
+**Completion gate.** Phase 7 is done only when ALL of the following hold (all greps use ERE / POSIX character classes so they work on both GNU and BSD grep):
+- `grep -rnE '//[[:space:]]*TODO|^[[:space:]]*TODO:' <target-dir>/src <target-dir>/README.md` returns no matches. This catches `// TODO` comments in Rust and `TODO:` at line starts in markdown without false-positiving on legitimate words. (For pending work intentionally deferred to a later commit, use `// FIXME:` instead — it's not scanned by this gate.)
+- No identifier named `placeholder` exists in the generated code: `grep -rnE '\bplaceholder\b' <target-dir>/src` returns no matches. (Real fields, vars, or function args must use domain-specific names.)
+- No scaffold `#[allow(dead_code)]` markers remain: `grep -rnE '#\[allow\(dead_code\)\]' <target-dir>/src` returns no matches. Both scaffold markers (on `Output::Ok` and on `example_api_key()`) should be deleted once their items are either used (Ok returned, accessor called) or removed.
+- No `EXAMPLE_API_KEY` reference remains anywhere in the generated tool: `grep -rnE 'EXAMPLE_API_KEY|example_api_key' <target-dir>/src` returns no matches.
 - `Output::Ok` carries the real success fields, not `result: String`.
 - `invoke()` actually calls the described service or operates on the real inputs — not just logs and returns `ErrUpstream`.
 - `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt --check` all pass.
@@ -333,9 +384,9 @@ From [tool-development.md](https://github.com/Talus-Network/nexus-sdk/blob/main/
 - **Stable output.** Crucial data is non-optional; missing data → return an `err` variant instead of `ok` with `None`.
 - **Docs.** Every tool has a README, included into `main.rs` via `#![doc = include_str!("../README.md")]`.
 
-From [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md):
+From [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs/toolkit-rust.md) — for the exact `NexusTool` trait method signatures consult upstream `tools/math/src/i64/add.rs` (the skill fetches it at every invocation; see Phase 4 verification step):
 
-- **Stateless.** `NexusTool::new` is called on every request; initialize dependencies there. Don't carry mutable state across requests.
+- **Stateless.** Tool structs should not carry mutable state across invocations. Per-startup config (env vars) is cached in module-level `OnceLock<String>` statics, populated once by `validate_config()` in `main()`. Anything per-request lives in the `Input` shape, not the struct.
 - **Signed HTTP.** Optional `authorize` hook receives `AuthContext` with the verified Leader node identity. Implement when policy requires per-leader gating.
 - **`bootstrap!` macro.** Accepts a single tool, `[Tool1, Tool2, ...]`, or `(socket_addr, [...])`. When multiple tools share a binary, each must have a unique `path()`.
 

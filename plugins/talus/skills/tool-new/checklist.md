@@ -58,6 +58,7 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 ## nexus-tools CI requirements (nexus-tools mode only)
 
 - [ ] `tools.json` present at `<target-dir>/tools.json`; copied from a reference tool (not fabricated); contains at minimum `"tool_name"`, `"command"` (must equal the binary/crate name), and `"environment"`
+- [ ] `tools.json`'s `"environment"` map lists every env var name the code passes to `load_required(...)` and contains no leftover scaffold names (`EXAMPLE_API_KEY` must be gone after Phase 7 step 3)
 - [ ] `build.rs` present; copied from an existing tool (e.g. `offchain/tools/math/build.rs`); not fabricated
 - [ ] `[build-dependencies]` in `Cargo.toml` includes `serde_json.workspace = true` and `toml = "0.8"` (required by `build.rs`)
 - [ ] `[[bin]]` section in `Cargo.toml` with `name = "<tool_name>"` (must equal `[package].name` and `tools.json["command"]`)
@@ -82,5 +83,5 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] All output variant names are snake_case; failure variants are prefixed `err`
 - [ ] Output ports have no nested objects — flat structure
 - [ ] Crucial output ports are not `Option<...>` — return an `err` variant instead
-- [ ] Read every field name in the `Input` struct. Any name containing `key`, `token`, `secret`, `password`, `credential`, `private`, `auth`, or similar is a violation — remove the field, add a `static <NAME>: OnceLock<String>` declaration, a `.set(load_required("<NAME>"))` line in `validate_config`, and an accessor function. Input ports go on-chain and are permanently visible.
+- [ ] Read every field name in the `Input` struct (use `sed -n '/struct Input/,/^}/p' src/<tool_name_snake>.rs | grep -iE 'key|token|secret|password|credential|private|auth'` to scope the search; ERE form is portable across GNU and BSD grep). Any match is a violation — remove the field, add a `static <NAME>: OnceLock<String>` declaration, a `.set(load_required("<NAME>"))` line in `validate_config`, and an accessor function. Input ports go on-chain and are permanently visible. `new()` takes no args and cannot read per-request secrets.
 - [ ] No direct `std::env::var` calls inside `invoke` or `new` — all env var access goes through the module-level accessor functions generated in the config section.

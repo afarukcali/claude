@@ -71,6 +71,7 @@ pub(crate) enum Output {
     #[allow(dead_code)] // remove when invoke() actually returns Ok
     Ok { result: String },
     ErrUpstream { reason: String },
+    #[allow(dead_code)] // remove when invoke() actually returns ErrConfig
     ErrConfig { reason: String },
 }
 
