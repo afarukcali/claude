@@ -133,13 +133,15 @@ Use the Write tool for new files (not Edit). The `Cargo.toml` is generated inlin
 
 #### `<target-dir>/src/main.rs`, `<target-dir>/src/<tool_name_snake>.rs`, `<target-dir>/README.md`
 
-These three files come from templates in this skill's own repo. Fetch each from `Talus-Network/claude` using the same preference order as Phase 3 (`gh api` → WebFetch):
+These three files come from templates that are co-located with this skill's installation. The skill's base directory is provided in the execution context — look for `Base directory for this skill:` in your active context. Read each template locally using the Read tool:
 
 | Template | Target path |
 |---|---|
-| `plugins/talus/skills/tool-new/templates/main.rs` | `<target-dir>/src/main.rs` |
-| `plugins/talus/skills/tool-new/templates/tool.rs` | `<target-dir>/src/<tool_name_snake>.rs` |
-| `plugins/talus/skills/tool-new/templates/README.md` | `<target-dir>/README.md` |
+| `<SKILL_BASE_DIR>/templates/main.rs` | `<target-dir>/src/main.rs` |
+| `<SKILL_BASE_DIR>/templates/tool.rs` | `<target-dir>/src/<tool_name_snake>.rs` |
+| `<SKILL_BASE_DIR>/templates/README.md` | `<target-dir>/README.md` |
+
+The templates live on disk next to this skill — no network call is needed or correct. If the base directory is not visible in the context, fall back in order: `gh api repos/Talus-Network/claude/contents/plugins/talus/skills/tool-new/templates/<file> -H "Accept: application/vnd.github.raw"`, then WebFetch at `https://raw.githubusercontent.com/Talus-Network/claude/main/plugins/talus/skills/tool-new/templates/<file>`.
 
 Each template contains `__PLACEHOLDER__` markers. Substitute every marker before writing:
 
@@ -318,7 +320,9 @@ If any of these fail, Phase 7 is incomplete — keep working, do not advance to 
 
 ### Phase 8 — Generate test script
 
-Fetch the template from the `Talus-Network/claude` repository (the plugin's own repo, not nexus-tools). Use the same preference order as Phase 3:
+Read the template from the skill's local installation. The skill's base directory is provided in the execution context — look for `Base directory for this skill:` in your active context. Read `<SKILL_BASE_DIR>/templates/test.sh` using the Read tool.
+
+The template lives on disk next to this skill — no network call is needed or correct. If the base directory is not visible in the context, fall back in order:
 
 - `gh api repos/Talus-Network/claude/contents/plugins/talus/skills/tool-new/templates/test.sh -H "Accept: application/vnd.github.raw"`
 - WebFetch fallback: `https://raw.githubusercontent.com/Talus-Network/claude/main/plugins/talus/skills/tool-new/templates/test.sh`
@@ -400,7 +404,7 @@ From [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs
 
 ## Don't
 
-- Do not bake template content into this skill's files. Templates come from upstream (or the local clone) at invocation time.
+- Do not bake Nexus Tool reference content (Phase 3 — `Cargo.toml`, `build.rs`, `tools.json`, `add.rs`, etc.) into this skill. Those files come from upstream `Talus-Network/nexus-tools` (or the local clone) at invocation time. The skill's own templates (`templates/main.rs`, `templates/tool.rs`, `templates/README.md`, `templates/test.sh`) are different — they are part of this skill's installation and must be read locally from `<SKILL_BASE_DIR>/templates/`.
 - Do not invent an FQN prefix on the user's behalf. Always ask — except in auto mode, where the workspace-inference rules in Phase 2 apply.
 - Do not skip the workspace `.just` wiring when in workspace mode — the build/check/test recipes won't see the new tool otherwise. The file is at `offchain/tools/.just` (from repo root) or `tools/.just` (from inside `offchain/`).
 - Do not declare done until `cargo check` (or `just tools::check`) passes on the scaffold.
