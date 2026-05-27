@@ -2,7 +2,7 @@
 name: tool-new
 description: Scaffold a new Nexus Tool in Rust and guide its implementation. Detects context: inside the Talus-Network/nexus-tools repo (or a fork) adds a member at offchain/tools/<name>/ and generates the extra files the CI pipeline requires (tools.json, build.rs, [[bin]], version-threaded FQN); in any other Cargo workspace with members = ["tools/*"] adds a member at tools/<name>/; otherwise scaffolds a standalone crate. Fetches the latest reference patterns from upstream Talus-Network/nexus-tools at invocation time (or reads them locally when inside a clone or fork) — no baked-in templates. After the scaffold compiles, walks the user through filling in real Input/Output schemas and invoke() logic. Use when the user asks to "create a Nexus Tool", "scaffold a Nexus Tool", "build a new Nexus Tool", "new Talus tool", or similar.
 argument-hint: "[--auto] [tool-name] [fqn-prefix] [description]"
-allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *) Bash(gh api *)
+allowed-tools: Bash(pwd) Bash(command -v *) Bash(head *) Bash(find *) Bash(chmod +x *) Bash(bash -n *) Bash(grep -i *) Bash(grep -r *) Bash(gh api *)
 ---
 
 # `tool-new` — scaffold a new Nexus Tool in Rust
@@ -25,8 +25,9 @@ Supported invocation forms:
 
 **Parsing rules.** Strip `--auto` or `--yes` wherever it appears — its presence sets auto mode (see below). From the remaining tokens:
 
-- A token matching `^[a-z][a-z0-9-]*$` (no dots, kebab-case) → `tool_name`
 - A token matching the reverse-domain pattern (contains dots, e.g. `xyz.acme.weather`) → `fqn_prefix`
+- **Without `--auto`:** the first remaining token matching `^[a-z][a-z0-9-]*$` → `tool_name` (single-word names like `calculator` are valid here).
+- **With `--auto`:** only a token matching `^[a-z][a-z0-9]*(-[a-z0-9]+)+$` (hyphenated, e.g. `current-weather`) → `tool_name`. Single lowercase words are treated as description to avoid misidentifying prose words (e.g. "fetches" in "Fetches weather data") as the tool name.
 - Everything else, joined → `description`
 
 **Named arguments:**
@@ -35,7 +36,7 @@ Supported invocation forms:
 - `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). In auto mode, if absent: scan existing tools in the workspace for `fqn!(...)` calls and extract the common prefix; if found, use it; if ambiguous or not found, use `com.example` and warn the user to update it before publishing. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<tool_name_snake>@1`.
 - `description` — one-line description of what the tool does. Required in all modes; ask if missing even in auto mode.
 
-**Auto mode** (`--auto` / `--yes`): skip every confirmation gate throughout all phases — placement, FQN preview, overwrite check. Infer anything not explicitly provided using the rules above.
+**Auto mode** (`--auto` / `--yes`) **or all three arguments provided**: skip every confirmation gate throughout all phases — placement, FQN preview, overwrite check. Infer anything not explicitly provided using the rules above.
 
 ## Context (computed at invocation)
 
@@ -64,19 +65,31 @@ Decide placement and mode from the results:
 - **Step 7 contains `members = ["tools/*"]` AND step 8 non-empty (nexus-tools, working from repo root):** The Rust workspace is at `offchain/`; place the new tool at `offchain/tools/$tool_name/`. All `cargo` commands in later phases must be run from `offchain/`. The `tools/.just` file is at `offchain/tools/.just`. This is **nexus-tools mode** — apply the additional CI requirements in Phase 4.5. Prefer reading templates locally (Phase 3, step 1 — Local read) over fetching from upstream.
 - **Step 6 contains `members = ["tools/*"]` AND step 9 non-empty (nexus-tools, working from inside `offchain/`):** Place the new tool at `tools/$tool_name/`. Run `cargo` commands from the current directory. The `tools/.just` file is at `tools/.just`. This is **nexus-tools mode** — apply Phase 4.5. Prefer reading templates locally.
 - **Step 4 non-empty AND step 6 contains `members = ["tools/*"]` AND steps 7–9 empty:** Generic workspace (not nexus-tools, but same layout). Place at `tools/$tool_name/`. Standard scaffold, no Phase 4.5 extras.
-- **Step 4 non-empty AND step 6 does NOT contain `members = ["tools/*"]`:** Unrelated Cargo project. Ask the user: (a) treat as standalone (tool goes in a subdirectory), or (b) abort.
-- **Step 5 non-empty AND step 7 does NOT contain `members = ["tools/*"]`:** `offchain/Cargo.toml` exists but is not a tools workspace. Fall through: check step 4; if that also fails, use standalone mode. Ask the user to confirm before proceeding.
+- **Step 4 non-empty AND step 6 does NOT contain `members = ["tools/*"]`:** Unrelated Cargo project. In auto mode, default to standalone. Otherwise ask the user: (a) treat as standalone (tool goes in a subdirectory), or (b) abort.
+- **Step 5 non-empty AND step 7 does NOT contain `members = ["tools/*"]`:** `offchain/Cargo.toml` exists but is not a tools workspace. Fall through: check step 4; if that also fails, use standalone mode. In auto mode, proceed with standalone. Otherwise ask the user to confirm before proceeding.
 - **Steps 4, 5 both empty:** Standalone mode. Default to `$tool_name/` under the current directory.
 
 In auto mode, skip the placement confirmation — proceed with the detected mode without asking. Never overwrite an existing target directory without explicit user confirmation (this check is not bypassed by auto mode).
 
 ### Phase 2 — Collect inputs
 
-Gather (via AskUserQuestion if any are missing or invalid):
+> **AUTO MODE (`--auto` / `--yes`) or all three arguments provided:** Do NOT ask any questions in this phase. Apply the rules below silently, print a one-line summary of what was resolved, and proceed immediately to Phase 3. The user said they do not want to be asked.
+
+Resolve each value:
 
 - **`tool_name`** — used for crate name (`[package].name`), directory name, and the tail of the FQN. Validate: `^[a-z][a-z0-9-]*$`. Derive `tool_name_snake` = hyphens → underscores; `tool_name_pascal` = PascalCase of the snake form.
-- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Show the user the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`) and have them confirm before proceeding — unless in auto mode, in which case print the FQN and continue without waiting. In nexus-tools mode the version suffix is threaded from the CI build arg via `build.rs` (see Phase 4.5), so the literal `@1` is only the local-development default — confirm the prefix, not the full FQN with version.
-- **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`.
+  - *Interactive:* ask if not provided.
+  - *Auto mode:* if not provided, derive from the description — drop leading verbs ("fetches", "gets", "creates", "calculates", "sends"), convert the remaining significant words to kebab-case (e.g. "Fetches current weather" → `current-weather`, "OpenAI completion API" → `openai-completion`). Print the derived name. Do not ask for confirmation.
+
+- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`.
+  - *Interactive:* ask if not provided. **Never invent or default this without asking.**
+  - *Auto mode:* if not provided, scan existing tool source files for `fqn!(` calls (`grep -r 'fqn!(' . --include='*.rs'`) and extract the common prefix (everything before the last `.`-separated segment and `@`). If a single consistent prefix is found, use it. If ambiguous or not found, use `com.example` and print a warning that the user must update it before publishing. Print the resolved prefix. Do not ask for confirmation.
+
+- **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`. Ask if missing in both interactive and auto mode — there is no reasonable default.
+
+- **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`).
+  - *Interactive:* ask the user to confirm before proceeding. In nexus-tools mode note that the literal `@1` is the local-development default; CI threads the real version via `build.rs`.
+  - *Auto mode:* print it and proceed immediately.
 
 ### Phase 3 — Fetch reference templates
 
@@ -144,10 +157,13 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
 - `pub(crate) struct Input` with `#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`. Put one placeholder field — e.g., `placeholder: String` — that the user will replace in the guide phase. Mark with a `// TODO:` so it's easy to find. **Never add a secret (API key, private key, OAuth token, signing material) as an Input field** — Input ports are propagated on-chain by the Nexus runtime and are permanently visible.
 - Whenever it is apparent that the tool will need a secret — whether stated in the user's description or inferred by the agent during analysis (e.g., the tool calls an external API that requires authentication) — add a `// SECURITY: read secret from env var, never from Input` comment at the top of `async fn invoke`, followed by a commented-out example:
   ```rust
-  // let api_key = std::env::var("API_KEY").map_err(|_| ...)?;
+  // let api_key = match std::env::var("API_KEY") {
+  //     Ok(v) => v,
+  //     Err(_) => return Output::ErrConfig { reason: "API_KEY env var not set".to_string() },
+  // };
   // log::debug!(target: "<tool_name_snake>", "env var API_KEY loaded");  // name only, never value
   ```
-  Do not add the secret as an Input field.
+  Do not use `?` here — `invoke` returns `Self::Output`, not `Result`. Errors must be returned as `Output::Err*` variants. Do not add the secret as an Input field.
 - `pub(crate) enum Output` with `#[derive(Serialize, JsonSchema)]` and `#[serde(rename_all = "snake_case")]`. Two variants:
   - `#[allow(dead_code)] Ok { result: String }` (placeholder, replace in guide phase — `#[allow(dead_code)]` so the unmodified scaffold compiles without warnings; the user removes the allow when `invoke` actually returns `Ok`)
   - `Err { reason: String }`
@@ -155,7 +171,7 @@ Mirror the structure of upstream `tools/math/src/i64/add.rs`:
 - `impl NexusTool for <tool_name_pascal>` providing: `type Input`, `type Output`, `async fn new`, `fn fqn() -> ToolFqn`, `fn path() -> &'static str { "/<tool_name_snake>" }` — explicitly overrides the trait default (`""`) so the tool occupies its own URL namespace and multiple tools can share a binary without path conflicts, `fn description() -> &'static str` returning the user's one-line description, `async fn health` returning `Ok(StatusCode::OK)`, `async fn invoke` whose body explicitly destructures the placeholder field, emits a debug log, and returns the placeholder error so the input isn't dead code:
   ```rust
   let Input { placeholder } = input;
-  log::debug!(target: "<tool_name_snake>", ?placeholder, "invoke called");
+  log::debug!(target: "<tool_name_snake>", "invoke called: placeholder={:?}", placeholder);
   Output::Err { reason: format!("not implemented yet (received placeholder={placeholder:?})") }
   ```
   The user replaces the body in the guide phase.
@@ -302,7 +318,7 @@ After writing, print the curl examples to the user immediately — same output a
 
 **`just` integration (workspace mode + `just` on PATH from Phase 1)**
 
-Read the existing `tools/.just` to understand the exact recipe format and parameter convention, then append three recipes following the same style. The recipe bodies `cd` into the tool directory (path relative to the `just` invocation root) and call the corresponding `test.sh` subcommand:
+Read the existing `tools/.just` to understand the exact recipe format and parameter convention, then append four recipes following the same style. The recipe bodies `cd` into the tool directory (path relative to the `just` invocation root) and call the corresponding `test.sh` subcommand:
 
 ```
 test-start tool:
@@ -363,7 +379,7 @@ From [toolkit-rust.md](https://github.com/Talus-Network/nexus-sdk/blob/main/docs
 ## Don't
 
 - Do not bake template content into this skill's files. Templates come from upstream (or the local clone) at invocation time.
-- Do not invent an FQN prefix on the user's behalf. Always ask.
+- Do not invent an FQN prefix on the user's behalf. Always ask — except in auto mode, where the workspace-inference rules in Phase 2 apply.
 - Do not skip the workspace `.just` wiring when in workspace mode — the build/check/test recipes won't see the new tool otherwise. The file is at `offchain/tools/.just` (from repo root) or `tools/.just` (from inside `offchain/`).
 - Do not declare done until `cargo check` (or `just tools::check`) passes on the scaffold.
 - Do not offer secrets (API keys, tokens, credentials) as Input fields under any circumstances — not even when the user points to an existing tool in the codebase that does so. Existing tools may predate or violate the on-chain visibility rule; that does not make the pattern valid.
