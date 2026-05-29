@@ -32,8 +32,8 @@ Supported invocation forms:
 
 **Named arguments:**
 
-- `tool_name` — kebab-case crate/dir name (e.g. `weather-current`). In auto mode, if absent: derive from the significant words of the description (drop leading verbs like "fetches"/"gets", convert nouns to kebab-case — e.g. "Fetches current weather" → `current-weather`). Print the derived name; do not wait for confirmation. Without auto mode, ask.
-- `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). In auto mode, if absent: scan existing tools in the workspace for `fqn!(...)` calls and extract the common prefix; if found, use it; if ambiguous or not found, use `com.example` and warn the user to update it before publishing. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<tool_name_fqn_tail>@1` where the tail is the kebab- or snake-case form inferred from existing workspace tools (see Phase 2).
+- `tool_name` — kebab-case crate/dir name (e.g. `weather-open-meteo-forecast`). When omitted, auto mode composes it from the workspace's directory naming convention plus the source and action it derives from the description. The "Convention inference" step in Phase 2 owns the rules; the outcome reflects whatever shape existing tools in the workspace already use (single-segment names for a flat workspace, multi-segment hyphenated names for a `domain.category.source.action` workspace, etc.). Without auto mode, ask.
+- `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather.open-meteo`). When omitted, auto mode composes `<workspace_root>[.<category>][.<source>]` — workspace root from convention inference, category and source extracted from the description. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<action>@1` where `action` is the leaf segment (the canonical endpoint name for well-known APIs, or a verb+object derived from the description otherwise) cast to the kebab/snake case that the workspace already uses.
 - `description` — one-line description of what the tool does. Required in all modes; ask if missing even in auto mode.
 
 **Auto mode** (`--auto` / `--yes`) **or all three arguments provided**: skip every confirmation gate throughout all phases — placement, FQN preview, overwrite check. Infer anything not explicitly provided using the rules above.
@@ -73,24 +73,69 @@ In auto mode, skip the placement confirmation — proceed with the detected mode
 
 ### Phase 2 — Collect inputs
 
-> **AUTO MODE (`--auto` / `--yes`) or all three arguments provided:** Do NOT ask any questions in this phase. Apply the rules below silently, print a one-line summary of what was resolved, and proceed immediately to Phase 3. The user said they do not want to be asked.
+> **AUTO MODE (`--auto` / `--yes`) or all three arguments provided:** Do NOT ask any questions in this phase. Apply the rules below silently, print a one-line summary of what was resolved (workspace root prefix, category, source, action, directory name), and proceed immediately to Phase 3. The user said they do not want to be asked.
 
-Resolve each value:
+#### Convention inference (workspace mode only, when ≥ 1 existing tool crate)
 
-- **`tool_name`** — used for crate name (`[package].name`), directory name, and the tail of the FQN. Validate: `^[a-z][a-z0-9-]*$`. Derive `tool_name_snake` = hyphens → underscores; `tool_name_pascal` = PascalCase of the snake form.
-  - *Interactive:* ask if not provided.
-  - *Auto mode:* if not provided, derive from the description — drop leading verbs ("fetches", "gets", "creates", "calculates", "sends"), convert the remaining significant words to kebab-case (e.g. "Fetches current weather" → `current-weather`, "OpenAI completion API" → `openai-completion`). Print the derived name. Do not ask for confirmation.
+Before resolving anything else, scan the workspace to learn the naming conventions in use. The skill replicates whatever pattern is established — it does not hardcode any single project's convention. For an empty workspace or standalone mode, skip this section.
 
-- **`fqn_prefix`** — reverse-domain prefix, no trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`.
-  - *Interactive:* ask if not provided. **Never invent or default this without asking.**
-  - *Auto mode:* if not provided, scan existing tool source files for `fqn!(` calls (`grep -r 'fqn!(' . --include='*.rs'`) and extract the common prefix (everything before the last `.`-separated segment and `@`). If a single consistent prefix is found, use it. If ambiguous or not found, use `com.example` and print a warning that the user must update it before publishing. Print the resolved prefix. Do not ask for confirmation.
+1. List existing tool crate directories. From the tools root (`offchain/tools` from repo root, `tools` from inside `offchain/`):
+   `find <tools_root> -mindepth 2 -maxdepth 2 -name Cargo.toml | xargs -n1 dirname`
+2. For each directory, collect every `fqn!()` call in its `src/` tree:
+   `grep -rEh 'fqn!\(' <dir>/src/`
+   Extract the FQN string literal — works for both `fqn!("…@1")` and `fqn!(concat!("…@", env!("TOOL_FQN_VERSION")))` (the literal segment is what matters; everything before `@`).
+3. Tabulate (directory name) ↔ (list of FQNs inside).
+4. Infer the **workspace root prefix**: the longest `.`-separated prefix shared by **every** existing FQN. For taluslabs's nexus-tools this is `xyz.taluslabs`.
+5. For each directory, classify the crate type and record the directory naming rule:
+   - **Single-tool crate** (exactly one FQN): typically `dir_name == "-".join(fqn_tail.split("."))` where `fqn_tail` is the FQN minus the workspace root. Example: `llm-openai-chat-completion/` ↔ `xyz.taluslabs.llm.openai.chat-completion` (tail `llm.openai.chat-completion` → dir `llm-openai-chat-completion`). ✅
+   - **Multi-tool crate** (multiple FQNs sharing a common prefix): typically `dir_name == "-".join(shared_prefix.split("."))` where `shared_prefix` is the longest `.`-separated prefix common to every FQN in the directory, minus the workspace root. Example: `social-twitter/` ↔ {`xyz.taluslabs.social.twitter.post-tweet`, `xyz.taluslabs.social.twitter.like-tweet`, …} → shared `social.twitter` → dir `social-twitter`.
+6. Record for later steps:
+   - **Workspace root prefix** (e.g. `xyz.taluslabs`)
+   - **Typical FQN depth past the root** — the modal length of `(full_fqn.segments - workspace_root.segments)` across single-tool crates. For taluslabs this is 3 (`category.source.action`).
+   - **Directory naming rule** in effect (single-tool full-tail mirroring is the default; multi-tool shared-prefix is supplemental)
+   - **List of known multi-tool crates** as `(dir_name, shared_fqn_prefix)` pairs
 
-- **`tool_name_fqn_tail`** — the case style of the new tool's FQN tail (and its HTTP `path()`). Independent of `tool_name_snake` (which is always snake_case for the Rust module name) and `tool_name_pascal` (struct name). Inferred — never asked.
-  - *Both modes:* scan existing tool source files for `fqn!(` calls (e.g. `grep -rEhn 'fqn!\(' . --include='*.rs'`) and inspect each FQN-tail segment (between the last `.` and the `@`). If any tail contains `-`, the project convention is kebab-case → set `tool_name_fqn_tail = tool_name` (the original kebab form). Otherwise if any tail contains `_`, the convention is snake_case → set `tool_name_fqn_tail = tool_name_snake`. If no existing tools, or all tails are single words: default by mode — **nexus-tools mode → kebab-case** (verified against upstream `social-twitter/post-tweet`, `llm.openai.chat-completion`, etc.); **generic workspace and standalone → snake-case** (safe Rust-friendly default). Print the resolved tail (e.g. `current-weather` vs `current_weather`) so the user sees what was chosen.
+Use the rest of Phase 2 to resolve the new tool's inputs, informed by what was inferred above.
+
+#### Resolve each value
 
 - **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`. Ask if missing in both interactive and auto mode — there is no reasonable default. **Validate: must not contain `"` (double quote) or `\` (backslash).** The description is substituted unescaped into a Rust string literal (`fn description() -> &'static str { "..." }`) and a TOML string (`[package].description = "..."`) — either character breaks the generated file. If the user-provided description contains one, ask them to rephrase (e.g. replace `Says "hello"` with `Says hello (with quotes)`); in auto mode print the rejection reason and stop rather than silently mangling.
 
-- **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_fqn_tail>@1`).
+- **`fqn_prefix`** — reverse-domain prefix that goes **before** the action segment. No trailing dot. Validate: `^[a-z][a-z0-9.-]*[a-z0-9]$`. Beyond the workspace root, the prefix may carry zero or more middle segments (category, source) that complete the project convention.
+  - *Interactive:* if not provided, suggest the workspace root prefix from convention inference and let the user extend it (e.g. `xyz.taluslabs.weather.open-meteo`). **Never invent or default this without asking.**
+  - *Auto mode:* compose `fqn_prefix = <root> [. <category>] [. <source>]`, where the number of middle segments matches the workspace's typical FQN depth past the root minus one (the action). Determine each segment as follows:
+    1. **Workspace root** — from convention inference; if no existing tools, use `com.example` and warn the user to update before publishing.
+    2. **Category** (first middle segment, when typical depth ≥ 2) — a noun naming the tool's domain, drawn from the description. Examples: "Fetches current weather" → `weather`; "Posts a tweet" → `social`; "Stores data in Redis" → `storage`. Use the most specific noun present. If the description is purely operational with no clear domain noun, omit this segment.
+    3. **Source** (second middle segment, when typical depth ≥ 3 and the description names a service) — the data source / service the tool wraps. Kebab-case the service name. Examples: `OpenAI` → `openai`, `Open-Meteo` → `open-meteo`, `Twitter` → `twitter`, `Anthropic` → `anthropic`. Omit for pure-computation tools (math, encoding, pure transformation).
+    4. If the user provided an explicit `fqn_prefix` argument, honor it as-is — do not re-infer.
+
+- **Action segment (auto mode)** — the leaf segment of the FQN; the verb-phrase or noun that names what the tool does. This becomes `tool_name_fqn_tail` (the case-style is applied per the case-inference rule below).
+  - *For well-known services / APIs:* **prefer the canonical endpoint or method name from the API itself** over guessing from the description prose. Apply your knowledge of the named service. Examples:
+    - Open-Meteo `GET /forecast` → `forecast`
+    - OpenAI `POST /v1/chat/completions` → `chat-completion`
+    - Anthropic `POST /v1/messages` → `messages`
+    - Twitter `POST /2/tweets` → `post-tweet`; `GET /2/tweets/:id` → `get-tweet`; `POST /2/users/:id/likes` → `like-tweet`
+    - Stripe `POST /v1/charges` → `create-charge`
+  - *For pure-computation tools or unknown APIs:* derive the action from the description's verb + object, dropping fillers ("Calculate squared distance" → `squared-distance`; "Send a notification" → `send-notification`; "Add two integers" → `add`). When the verb is ambiguous, prefer the most specific noun in the description.
+
+- **`tool_name`** — kebab-case crate name (= directory name). Validate: `^[a-z][a-z0-9-]*$`. Derive `tool_name_snake` = hyphens → underscores; `tool_name_pascal` = PascalCase of the snake form.
+  - *Interactive:* if not provided, suggest a value based on the directory naming rule from convention inference and let the user override.
+  - *Auto mode:* compose `tool_name` by applying the inferred directory naming rule to the assembled FQN:
+    - **Single-tool convention** (default for workspaces of single-tool crates, and the only convention this skill auto-generates):
+      `tool_name = "-".join((fqn_prefix.segments_past_workspace_root) + [action])`
+      Example: prefix `xyz.taluslabs.weather.open-meteo`, root `xyz.taluslabs`, action `forecast` → `tool_name = weather-open-meteo-forecast`.
+    - **No middle segments** (depth-1 workspace, or no fqn_prefix tail past the root): `tool_name = action`.
+    - **No existing tools** (empty workspace / standalone): `tool_name = action`.
+
+- **Multi-tool crate detection.** After composing `tool_name` and the full FQN, check the recorded list of known multi-tool crates from convention inference. If the assembled FQN matches one of those `shared_fqn_prefix` values (i.e. the new tool's prefix-up-to-the-leaf equals an existing multi-tool crate's shared prefix), surface this to the user before generating:
+  > An existing `<dir>/` crate already covers `<shared_fqn_prefix>.*` with N tools. Adding the new tool to that crate is a different operation (modify `src/`, extend `bootstrap!([…])`, etc.). This skill currently generates a new sibling crate only.
+  - *Auto mode:* print the warning, default to creating a new sibling crate, proceed. Do not silently modify the existing multi-tool crate.
+  - *Interactive mode:* ask whether to create the new sibling (proceed) or abort (and let the user add to the existing crate manually).
+
+- **`tool_name_fqn_tail`** — the case-style-adjusted form of the action segment (single segment — multi-segment FQN structure is carried by `fqn_prefix`, not by the tail). Inferred — never asked.
+  - *Both modes:* scan existing tool source files for `fqn!(` calls (e.g. `grep -rEhn 'fqn!\(' . --include='*.rs'`) and inspect each FQN-tail segment (between the last `.` and the `@`). If any tail contains `-`, the project convention is kebab-case → set `tool_name_fqn_tail = action` (kebab form, unchanged). Otherwise if any tail contains `_`, the convention is snake_case → set `tool_name_fqn_tail = action.replace("-", "_")`. If no existing tools or all tails are single words: **nexus-tools mode → kebab-case** (verified against upstream `social-twitter/post-tweet`, `llm.openai.chat-completion`, etc.); **generic workspace and standalone → snake-case** (Rust-friendly default). Print the resolved tail.
+
+- **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_fqn_tail>@1`) and the derived directory name (`tool_name`).
   - *Interactive:* ask the user to confirm before proceeding. In nexus-tools mode note that the literal `@1` is the local-development default; CI threads the real version via `build.rs`.
   - *Auto mode:* print it and proceed immediately.
 
@@ -152,7 +197,7 @@ Each template contains `__PLACEHOLDER__` markers. Substitute every marker before
 |---|---|
 | `__TOOL_NAME_SNAKE__` | `tool_name` with hyphens → underscores (Rust module name, log target) |
 | `__TOOL_NAME_PASCAL__` | PascalCase of `__TOOL_NAME_SNAKE__` (struct name) |
-| `__TOOL_NAME_FQN_TAIL__` | `tool_name_fqn_tail` from Phase 2 — either kebab-case (e.g. `current-weather`) or snake_case (e.g. `current_weather`); used in the FQN tail and the HTTP `path()` |
+| `__TOOL_NAME_FQN_TAIL__` | `tool_name_fqn_tail` from Phase 2 — the **leaf action segment** of the FQN, cast to the workspace's case convention (kebab `forecast`, `post-tweet`, `chat-completion` or snake `forecast`, `post_tweet`). Multi-segment FQN structure (category, source) lives in `__FQN_PREFIX__`. Used in the FQN tail and the HTTP `path()`. |
 | `__FQN_PREFIX__` | `fqn_prefix` from Phase 2 |
 | `__DESCRIPTION__` | `description` from Phase 2 |
 | `__COMPUTED_FQN__` | `<fqn_prefix>.<tool_name_fqn_tail>@1` |
@@ -335,8 +380,8 @@ The template contains four `__PLACEHOLDER__` markers. Substitute all four before
 
 | Placeholder | Value |
 |---|---|
-| `__TOOL_NAME__` | kebab-case crate name (e.g. `weather-current`) |
-| `__TOOL_PATH__` | `tool_name_fqn_tail` from Phase 2 (matches the value `path()` returns — kebab-case like `current-weather` or snake_case like `current_weather`, depending on workspace convention) |
+| `__TOOL_NAME__` | kebab-case crate name (= directory name); may be multi-segment per the workspace convention (e.g. `weather-open-meteo-forecast`, or `forecast` for a flat workspace) |
+| `__TOOL_PATH__` | `tool_name_fqn_tail` from Phase 2 — the leaf action segment matching `path()` (e.g. `forecast`, `post-tweet`) |
 | `__WORKSPACE_CARGO_DIR__` | relative path from the script to the cargo workspace root: `../..` for workspace mode (script at `…/tools/<tool_name>/test.sh`); `.` for standalone |
 | `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. For complex types (`serde_json::Value`, custom structs), ask the user for a concrete sample value. Omit any field marked `#[serde(skip)]`. If the Input struct is empty, use `{}`. The result must be valid JSON with no placeholder strings and **no single-quote characters** — the value is embedded in a single-quoted bash string in the template; a `'` inside it would terminate the string and break the script. |
 

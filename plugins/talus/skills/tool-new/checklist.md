@@ -85,3 +85,11 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
 - [ ] Crucial output ports are not `Option<...>` — return an `err` variant instead
 - [ ] Read every field name in the `Input` struct (use `sed -n '/struct Input/,/^}/p' src/<tool_name_snake>.rs | grep -iE 'key|token|secret|password|credential|private|auth'` to scope the search; ERE form is portable across GNU and BSD grep). Any match is a violation — remove the field, add a `static <NAME>: OnceLock<String>` declaration, a `.set(load_required("<NAME>"))` line in `validate_config`, and an accessor function. Input ports go on-chain and are permanently visible. `new()` takes no args and cannot read per-request secrets.
 - [ ] No direct `std::env::var` calls inside `invoke` or `new` — all env var access goes through the module-level accessor functions generated in the config section.
+
+## Workspace convention conformance (workspace mode, when existing tools were present)
+
+- [ ] `fqn_prefix` includes the same middle segments (category, source) that other tools in the workspace use at the same depth. For taluslabs nexus-tools that means a 4-segment prefix `xyz.taluslabs.<category>.<source>` and an action leaf — verified by spot-checking one existing FQN in the workspace.
+- [ ] When the user's description names a well-known service, the source segment is that service in kebab-case (`open-meteo`, `openai`, `twitter`) — not omitted, not a generic substitute.
+- [ ] The action segment (`tool_name_fqn_tail`) is the canonical endpoint or method name for the named service when one exists (e.g. Open-Meteo `/forecast` → `forecast`, OpenAI `chat/completions` → `chat-completion`) — not a paraphrase of the description prose.
+- [ ] `tool_name` (= directory name) matches the workspace's directory naming rule: full FQN tail past the workspace root joined with `-` for single-tool crates (`weather-open-meteo-forecast`), or the shared FQN prefix for a multi-tool crate. No silent fallback to the single-segment action.
+- [ ] If the assembled FQN would land inside a known multi-tool crate's namespace, the user was warned and either confirmed a new sibling crate or aborted to extend the existing crate manually. The skill did not silently modify an existing multi-tool crate.
