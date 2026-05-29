@@ -100,12 +100,14 @@ The two sources are layered: workspace inference fixes what it can; description-
    - **Workspace root prefix** (e.g. `xyz.taluslabs`)
    - **Directory naming rule** in effect (single-tool full-tail mirroring is the default; multi-tool shared-prefix is supplemental)
    - **List of known multi-tool crates** as `(dir_name, shared_fqn_prefix)` pairs
+   - **Typical FQN depth past the root** — the modal count of `.`-separated segments after the workspace root across single-tool crates. For taluslabs's nexus-tools this is 3 (`category.source.action`). **Informational only**; the rules in Phase 2 do not gate any output on this value. It is used solely by the depth-gap warning below to flag descriptions that look under-specified relative to the workspace convention.
 
 **Defaults when workspace inference is skipped or empty:**
 
 - Workspace root prefix → `com.example` (auto mode prints a warning: "update before publishing").
 - Directory naming rule → single-tool full-tail mirroring (dir name = FQN tail past the root joined with `-`).
 - Multi-tool crate list → empty.
+- Typical FQN depth → unknown (no warning fires).
 
 These defaults are what makes the rest of Phase 2 robust to a brand-new repo. They never block description-driven composition.
 
@@ -145,6 +147,13 @@ Use the rest of Phase 2 to resolve the new tool's inputs.
   > An existing `<dir>/` crate already covers `<shared_fqn_prefix>.*` with N tools. Adding the new tool to that crate is a different operation (modify `src/`, extend `bootstrap!([…])`, etc.). This skill currently generates a new sibling crate only.
   - *Auto mode:* print the warning, default to creating a new sibling crate, proceed. Do not silently modify the existing multi-tool crate.
   - *Interactive mode:* ask whether to create the new sibling (proceed) or abort (and let the user add to the existing crate manually).
+
+- **Depth-gap warning (workspace mode only, when typical FQN depth is known).** After composing the FQN, count the segments past the workspace root in the assembled value (i.e. `fqn_prefix.segments_past_root` count + 1 for the action). Compare to the typical FQN depth recorded in convention inference:
+  - **Equal or greater:** no warning.
+  - **One less than typical** (e.g. workspace uses `category.source.action` = 3 segments but our FQN is `category.action` = 2): the description most likely didn't name a service. Print:
+    > Note: existing tools in this workspace use `<typical>`-segment FQN tails (e.g. one concrete example from inference, like `social.twitter.post-tweet`). The composed FQN `<our-fqn>` has `<ours>` segments past the root — the description didn't name a source service, so the source segment was omitted. To get a richer FQN that matches the workspace convention, re-run with a description that names the service (e.g. "Fetches current weather from Open-Meteo" instead of "Fetches current weather").
+  - **Two or more less:** print the same warning but reference both gaps. This is rare in practice — the description is probably too sparse for auto mode to do a useful job.
+  - The warning is **informational only** — auto mode proceeds with the composed FQN. Interactive mode shows it before the FQN preview confirmation so the user can re-run with a richer description if they want.
 
 - **`tool_name_fqn_tail`** — the case-style-adjusted form of the action segment (single segment — multi-segment FQN structure is carried by `fqn_prefix`, not by the tail). Inferred — never asked.
   - *Both modes:* scan existing tool source files for `fqn!(` calls (e.g. `grep -rEhn 'fqn!\(' . --include='*.rs'`) and inspect each FQN-tail segment (between the last `.` and the `@`). If **any existing tail contains `_`**, the project has an explicit snake_case convention → set `tool_name_fqn_tail = action.replace("-", "_")`. Otherwise (any existing tail contains `-`, or all tails are single-word, or there are no existing tools at all) → kebab-case → set `tool_name_fqn_tail = action` (unchanged). Print the resolved tail.
