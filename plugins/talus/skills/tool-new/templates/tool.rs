@@ -1,4 +1,4 @@
-//! `__FQN_PREFIX__.__TOOL_NAME_SNAKE__@1`
+//! `__FQN_PREFIX__.__TOOL_NAME_FQN_TAIL__@1`
 //!
 //! __DESCRIPTION__
 
@@ -89,13 +89,13 @@ impl NexusTool for __TOOL_NAME_PASCAL__ {
 
     fn fqn() -> ToolFqn {
         // Generic workspace / standalone:
-        fqn!("__FQN_PREFIX__.__TOOL_NAME_SNAKE__@1")
+        fqn!("__FQN_PREFIX__.__TOOL_NAME_FQN_TAIL__@1")
         // nexus-tools mode — uncomment the line below and remove the line above:
-        // fqn!(concat!("__FQN_PREFIX__.__TOOL_NAME_SNAKE__@", env!("TOOL_FQN_VERSION")))
+        // fqn!(concat!("__FQN_PREFIX__.__TOOL_NAME_FQN_TAIL__@", env!("TOOL_FQN_VERSION")))
     }
 
     fn path() -> &'static str {
-        "/__TOOL_NAME_SNAKE__" // explicitly overrides the trait default ("")
+        "/__TOOL_NAME_FQN_TAIL__" // explicitly overrides the trait default ("")
     }
 
     fn description() -> &'static str {

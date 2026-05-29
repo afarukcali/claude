@@ -38,7 +38,7 @@ Walk through these after Phase 6 (cargo check passed). Each item is a property t
   - [ ] `fn description() -> &'static str`
   - [ ] `async fn health(&self) -> AnyResult<StatusCode>` — note `&self`, not `&()`
   - [ ] `async fn invoke(&self, input: Self::Input) -> Self::Output` — note `&self`, not `self`
-- [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_snake>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_snake>@", env!("TOOL_FQN_VERSION")))`
+- [ ] `fqn()` form matches the mode: generic/standalone → `fqn!("<fqn_prefix>.<tool_name_fqn_tail>@1")`; nexus-tools → `fqn!(concat!("<fqn_prefix>.<tool_name_fqn_tail>@", env!("TOOL_FQN_VERSION")))`. The `tool_name_fqn_tail` segment uses the case convention inferred from existing workspace tools (kebab in nexus-tools mode and any workspace with hyphenated FQN tails; snake elsewhere) and **matches** the value `path()` returns.
 - [ ] `invoke()` does **not** return `Result` — failures are returned as `Output::Err*` variants
 - [ ] `invoke()` accesses secrets via module-level accessors, not `std::env::var` directly
 - [ ] Inline `#[cfg(test)] mod tests` with one `#[tokio::test]` per output variant (at minimum `Ok`, `ErrUpstream`, and `ErrConfig`) plus one health check. Each test constructs the tool via `__TOOL_NAME_PASCAL__::new().await` (not by bare struct literal) so the construction path is exercised.

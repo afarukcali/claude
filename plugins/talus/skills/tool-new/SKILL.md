@@ -33,7 +33,7 @@ Supported invocation forms:
 **Named arguments:**
 
 - `tool_name` — kebab-case crate/dir name (e.g. `weather-current`). In auto mode, if absent: derive from the significant words of the description (drop leading verbs like "fetches"/"gets", convert nouns to kebab-case — e.g. "Fetches current weather" → `current-weather`). Print the derived name; do not wait for confirmation. Without auto mode, ask.
-- `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). In auto mode, if absent: scan existing tools in the workspace for `fqn!(...)` calls and extract the common prefix; if found, use it; if ambiguous or not found, use `com.example` and warn the user to update it before publishing. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<tool_name_snake>@1`.
+- `fqn_prefix` — reverse-domain namespace prefix **without trailing dot** (e.g. `xyz.taluslabs.weather`). In auto mode, if absent: scan existing tools in the workspace for `fqn!(...)` calls and extract the common prefix; if found, use it; if ambiguous or not found, use `com.example` and warn the user to update it before publishing. **Without auto mode, never invent or default this — always ask.** The final FQN is `<fqn_prefix>.<tool_name_fqn_tail>@1` where the tail is the kebab- or snake-case form inferred from existing workspace tools (see Phase 2).
 - `description` — one-line description of what the tool does. Required in all modes; ask if missing even in auto mode.
 
 **Auto mode** (`--auto` / `--yes`) **or all three arguments provided**: skip every confirmation gate throughout all phases — placement, FQN preview, overwrite check. Infer anything not explicitly provided using the rules above.
@@ -85,9 +85,12 @@ Resolve each value:
   - *Interactive:* ask if not provided. **Never invent or default this without asking.**
   - *Auto mode:* if not provided, scan existing tool source files for `fqn!(` calls (`grep -r 'fqn!(' . --include='*.rs'`) and extract the common prefix (everything before the last `.`-separated segment and `@`). If a single consistent prefix is found, use it. If ambiguous or not found, use `com.example` and print a warning that the user must update it before publishing. Print the resolved prefix. Do not ask for confirmation.
 
+- **`tool_name_fqn_tail`** — the case style of the new tool's FQN tail (and its HTTP `path()`). Independent of `tool_name_snake` (which is always snake_case for the Rust module name) and `tool_name_pascal` (struct name). Inferred — never asked.
+  - *Both modes:* scan existing tool source files for `fqn!(` calls (e.g. `grep -rEhn 'fqn!\(' . --include='*.rs'`) and inspect each FQN-tail segment (between the last `.` and the `@`). If any tail contains `-`, the project convention is kebab-case → set `tool_name_fqn_tail = tool_name` (the original kebab form). Otherwise if any tail contains `_`, the convention is snake_case → set `tool_name_fqn_tail = tool_name_snake`. If no existing tools, or all tails are single words: default by mode — **nexus-tools mode → kebab-case** (verified against upstream `social-twitter/post-tweet`, `llm.openai.chat-completion`, etc.); **generic workspace and standalone → snake-case** (safe Rust-friendly default). Print the resolved tail (e.g. `current-weather` vs `current_weather`) so the user sees what was chosen.
+
 - **`description`** — one-line description; used in both `Cargo.toml` `[package].description` and `impl NexusTool::description`. Ask if missing in both interactive and auto mode — there is no reasonable default. **Validate: must not contain `"` (double quote) or `\` (backslash).** The description is substituted unescaped into a Rust string literal (`fn description() -> &'static str { "..." }`) and a TOML string (`[package].description = "..."`) — either character breaks the generated file. If the user-provided description contains one, ask them to rephrase (e.g. replace `Says "hello"` with `Says hello (with quotes)`); in auto mode print the rejection reason and stop rather than silently mangling.
 
-- **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_snake>@1`).
+- **FQN preview** — show the computed final FQN (`<fqn_prefix>.<tool_name_fqn_tail>@1`).
   - *Interactive:* ask the user to confirm before proceeding. In nexus-tools mode note that the literal `@1` is the local-development default; CI threads the real version via `build.rs`.
   - *Auto mode:* print it and proceed immediately.
 
@@ -147,11 +150,12 @@ Each template contains `__PLACEHOLDER__` markers. Substitute every marker before
 
 | Placeholder | Value |
 |---|---|
-| `__TOOL_NAME_SNAKE__` | `tool_name` with hyphens → underscores |
-| `__TOOL_NAME_PASCAL__` | PascalCase of `__TOOL_NAME_SNAKE__` |
+| `__TOOL_NAME_SNAKE__` | `tool_name` with hyphens → underscores (Rust module name, log target) |
+| `__TOOL_NAME_PASCAL__` | PascalCase of `__TOOL_NAME_SNAKE__` (struct name) |
+| `__TOOL_NAME_FQN_TAIL__` | `tool_name_fqn_tail` from Phase 2 — either kebab-case (e.g. `current-weather`) or snake_case (e.g. `current_weather`); used in the FQN tail and the HTTP `path()` |
 | `__FQN_PREFIX__` | `fqn_prefix` from Phase 2 |
 | `__DESCRIPTION__` | `description` from Phase 2 |
-| `__COMPUTED_FQN__` | `<fqn_prefix>.<tool_name_snake>@1` |
+| `__COMPUTED_FQN__` | `<fqn_prefix>.<tool_name_fqn_tail>@1` |
 
 After writing each file, confirm no markers remain. If any are present, the substitution missed something — fix before continuing:
 
@@ -332,7 +336,7 @@ The template contains four `__PLACEHOLDER__` markers. Substitute all four before
 | Placeholder | Value |
 |---|---|
 | `__TOOL_NAME__` | kebab-case crate name (e.g. `weather-current`) |
-| `__TOOL_PATH__` | snake_case tool name, matching `path()` (e.g. `weather_current`) |
+| `__TOOL_PATH__` | `tool_name_fqn_tail` from Phase 2 (matches the value `path()` returns — kebab-case like `current-weather` or snake_case like `current_weather`, depending on workspace convention) |
 | `__WORKSPACE_CARGO_DIR__` | relative path from the script to the cargo workspace root: `../..` for workspace mode (script at `…/tools/<tool_name>/test.sh`); `.` for standalone |
 | `__SAMPLE_JSON__` | JSON object from the Input struct fields written in Phase 7. Map Rust types to plausible values: `String` → `"example"`, `i64`/`i32`/`u64`/`u32` → `42`, `f64`/`f32` → `1.0`, `bool` → `true`, `Option<T>` → inner type's value. For complex types (`serde_json::Value`, custom structs), ask the user for a concrete sample value. Omit any field marked `#[serde(skip)]`. If the Input struct is empty, use `{}`. The result must be valid JSON with no placeholder strings and **no single-quote characters** — the value is embedded in a single-quoted bash string in the template; a `'` inside it would terminate the string and break the script. |
 
@@ -344,23 +348,21 @@ After writing, print the curl examples to the user immediately — same output a
 
 **`just` integration (workspace mode + `just` on PATH from Phase 1)**
 
-Read the existing `tools/.just` to understand the exact recipe format and parameter convention, then append four recipes following the same style. The recipe bodies `cd` into the tool directory (path relative to the `just` invocation root) and call the corresponding `test.sh` subcommand:
+Read the existing `tools/.just` to understand the exact recipe format and parameter convention, then append four recipes following the same style. The `.just` file lives alongside the tool subdirectories (at `offchain/tools/.just`), and `just` runs each module recipe with the working directory set to the file's parent. So `cd {{tool}}` resolves to `<tool_name>/` relative to `offchain/tools/`. Do **not** prepend `tools/` or `offchain/tools/` — that is the working directory, not part of the cd target.
 
 ```
 test-start tool:
-    cd <path-to-tools-dir>/{{tool}} && ./test.sh start
+    cd {{tool}} && ./test.sh start
 
 test-stop tool:
-    cd <path-to-tools-dir>/{{tool}} && ./test.sh stop
+    cd {{tool}} && ./test.sh stop
 
 test-run tool:
-    cd <path-to-tools-dir>/{{tool}} && ./test.sh run
+    cd {{tool}} && ./test.sh run
 
 test-dev tool:
-    cd <path-to-tools-dir>/{{tool}} && ./test.sh dev
+    cd {{tool}} && ./test.sh dev
 ```
-
-Where `<path-to-tools-dir>` matches the existing recipes' path convention (`tools/` when running from `offchain/`, `offchain/tools/` when running from the repo root).
 
 **Deployment reminders**
 
