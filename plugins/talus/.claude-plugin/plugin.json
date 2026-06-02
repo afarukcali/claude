@@ -1,0 +1,5 @@
+{
+  "name": "talus",
+  "description": "Helpers for building Nexus Tools and Talus-related artifacts.",
+  "version": "0.1.0"
+}

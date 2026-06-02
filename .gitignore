@@ -1,0 +1,5 @@
+# Claude Code agent-tooling artifacts
+claude-*.md
+.claude/
+*.bak-*.md
+*.local.md
